@@ -1,0 +1,16 @@
+# ---- Build output ----
+/build/
+/build-debug/
+
+# ---- Agent / editor workspace ----
+/.workbuddy-ai/
+/.vs/
+/.vscode/
+*.user
+
+# ---- Test probe binaries (built from test/*.cpp) ----
+/test/*.exe
+/test/*.obj
+
+# ---- Downloaded test samples (reproducible via test/fetch_samples.py) ----
+/test/samples/

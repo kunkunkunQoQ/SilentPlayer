@@ -1,0 +1,34 @@
+#include <windows.h>
+#include "resource.h"
+
+IDI_APP ICON "app.ico"
+
+// 标准 Windows VERSIONINFO。
+// 任务管理器「进程」页优先使用 FileDescription 作为显示名，缺失时产品/公司信息为空，
+// 只能回退到映像名 —— 因此必须显式声明。
+VS_VERSION_INFO VERSIONINFO
+ FILEVERSION    1,0,0,0
+ PRODUCTVERSION 1,0,0,0
+ FILEFLAGSMASK  VS_FFI_FILEFLAGSMASK
+ FILEFLAGS      0
+ FILEOS         VOS_NT_WINDOWS32
+ FILETYPE       VFT_APP
+ FILESUBTYPE    VFT2_UNKNOWN
+BEGIN
+    BLOCK "StringFileInfo"
+    BEGIN
+        BLOCK "080404B0"
+        BEGIN
+            VALUE "FileDescription",  "SilentPlayer"
+            VALUE "FileVersion",      "1.0.0.0"
+            VALUE "InternalName",     "SilentPlayer"
+            VALUE "OriginalFilename", "SilentPlayer.exe"
+            VALUE "ProductName",      "SilentPlayer"
+            VALUE "ProductVersion",   "1.0.0.0"
+        END
+    END
+    BLOCK "VarFileInfo"
+    BEGIN
+        VALUE "Translation", 0x804, 1200
+    END
+END
