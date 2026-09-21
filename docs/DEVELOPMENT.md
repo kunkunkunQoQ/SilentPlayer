@@ -82,10 +82,13 @@ export PATH="$MSVC\\bin\\Hostx64\\x64:$SDK\\bin\\$V\\x64:$PATH"
 
 ## 发布方式
 
-1. Release 构建。
-2. 复制 `build\SilentPlayer.exe` 到发布目录。
-3. 验证单 EXE（见下）。
-4. 可选：附带 README.md。
+1. Release 构建（见「CMake 配置与构建」）。
+2. 完成「架构验证」（见下）与冒烟测试。
+3. 按 **docs/RELEASING.md（发布规范）** 执行：本地提交 → 推送 →
+   创建 GitHub Release → 上传 `build\SilentPlayer.exe` → 按验证清单核对。
+
+发布资产规范（仅上传单 EXE，默认不做 MSIX/MSI）、GitHub 仓库创建/标签、
+代理与 UTF-8 编码踩坑、发布后验证清单见 [RELEASING.md](RELEASING.md)。
 
 ## 如何测试
 

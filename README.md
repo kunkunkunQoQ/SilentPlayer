@@ -107,7 +107,9 @@ SilentPlayer.exe music2.mp3
 
 ## 构建与开发
 
-参见 [docs/DEVELOPMENT.md](docs/DEVELOPMENT.md)（构建方法）与 [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md)（架构说明）。
+参见 [docs/DEVELOPMENT.md](docs/DEVELOPMENT.md)（构建方法）、
+[docs/ARCHITECTURE.md](docs/ARCHITECTURE.md)（架构说明）与
+[docs/RELEASING.md](docs/RELEASING.md)（GitHub 发布规范）。
 
 ## 项目结构
 
@@ -115,7 +117,7 @@ SilentPlayer.exe music2.mp3
 SilentPlayer/
 ├── src/                 # 源码（C++ / Win32 / Media Foundation）
 ├── resources/           # 图标与资源
-├── docs/                # 项目文档
+├── docs/                # 项目文档（开发 / 架构 / 发布规范）
 ├── test/                # 测试样本与诊断探针
 ├── CMakeLists.txt
 └── README.md
