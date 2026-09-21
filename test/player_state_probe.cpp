@@ -74,8 +74,8 @@ void DumpTrayMenu(HWND mainHwnd) {
             if ((state & MF_SEPARATOR) != 0) {
                 wprintf(L"  [%d] ---- separator ----\n", i);
             } else {
-                wprintf(L"  [%d] id=%u text='%ls'\n", i, GetMenuItemID(hMenu, i),
-                        text);
+                wprintf(L"  [%d] id=%u text='%ls'%ls\n", i, GetMenuItemID(hMenu, i),
+                        text, (state & MF_CHECKED) ? L"  [CHECKED]" : L"");
             }
         }
     }
@@ -83,6 +83,55 @@ void DumpTrayMenu(HWND mainHwnd) {
     PostMessageW(menu, WM_KEYDOWN, VK_ESCAPE, 0);
     PostMessageW(menu, WM_KEYUP, VK_ESCAPE, 0);
     Sleep(200);
+}
+
+bool InvokeTrayItem(HWND mainHwnd, int itemIndex); // 前置声明
+
+// 触发托盘「麦克风输出提示」并读出弹窗内容，然后关掉它。
+// 这样"检测结果与指引文本"可以被自动化核对，不用靠肉眼看截图。
+void DumpMicHintDialog(HWND mainHwnd) {
+    if (!InvokeTrayItem(mainHwnd, 3)) {
+        return;
+    }
+    HWND dlg = nullptr;
+    for (int i = 0; i < 60 && !dlg; ++i) {
+        Sleep(50);
+        dlg = FindWindowW(L"#32770", nullptr);
+    }
+    if (!dlg) {
+        wprintf(L"mic hint dialog did not appear\n");
+        return;
+    }
+    wchar_t title[256] = {};
+    GetWindowTextW(dlg, title, 256);
+    wprintf(L"dialog title = '%ls'\n", title);
+
+    // 逐个静态控件取文本（MessageBox 的正文是一个 Static 子窗口）。
+    for (HWND child = GetWindow(dlg, GW_CHILD); child;
+         child = GetWindow(child, GW_HWNDNEXT)) {
+        wchar_t cls[64] = {};
+        GetClassNameW(child, cls, 64);
+        if (_wcsicmp(cls, L"Static") != 0) {
+            continue;
+        }
+        const int len = GetWindowTextLengthW(child);
+        if (len <= 0) {
+            continue;
+        }
+        std::wstring text(static_cast<size_t>(len) + 1, L'\0');
+        GetWindowTextW(child, &text[0], len + 1);
+        text.resize(static_cast<size_t>(len));
+        wprintf(L"---- dialog text ----\n%ls\n---------------------\n", text.c_str());
+        // 同时以 UTF-8 落盘：控制台代码页显示不了中文，落盘后才能核对文本内容
+        FILE* f = nullptr;
+        if (_wfopen_s(&f, L"E:////kunkun////slientPlayer////build////_michint.txt",
+                      L"w, ccs=UTF-8") == 0 && f) {
+            fwprintf(f, L"%ls", text.c_str());
+            fclose(f);
+        }
+    }
+    PostMessageW(dlg, WM_CLOSE, 0, 0);
+    Sleep(300);
 }
 
 // 模拟点击托盘菜单里的第 itemIndex 个可选项（0 起，仅计数非分隔项）。
@@ -302,6 +351,7 @@ int wmain(int argc, wchar_t** argv) {
     int trayItemIndex = 0;
     bool dumpLayout = false;
     bool dumpTray = false;
+    bool dumpMicHint = false;
     if (argc > 1) samples = _wtoi(argv[1]);
     if (argc > 2) intervalMs = static_cast<DWORD>(_wtoi(argv[2]));
     for (int a = 1; a < argc; ++a) {
@@ -309,6 +359,8 @@ int wmain(int argc, wchar_t** argv) {
             dumpLayout = true;
         } else if (wcscmp(argv[a], L"--traydump") == 0) {
             dumpTray = true;
+        } else if (wcscmp(argv[a], L"--michint") == 0) {
+            dumpMicHint = true;
         } else if (wcsncmp(argv[a], L"--toggle=", 9) == 0) {
             wchar_t* ctx = nullptr;
             for (wchar_t* tok = wcstok_s(argv[a] + 9, L",", &ctx);
@@ -359,6 +411,10 @@ int wmain(int argc, wchar_t** argv) {
     }
     if (dumpTray) {
         DumpTrayMenu(hwnd);
+        return 0;
+    }
+    if (dumpMicHint) {
+        DumpMicHintDialog(hwnd);
         return 0;
     }
 

@@ -120,7 +120,8 @@ HRESULT AudioPlayer::CreateSession() {
     if (FAILED(hr)) {
         return hr;
     }
-    hr = m_session->BeginGetEvent(this, nullptr);
+    // 把会话本身作为状态对象传进去：回调里据此判断事件是不是当前会话的。
+    hr = m_session->BeginGetEvent(this, m_session.Get());
     if (FAILED(hr)) {
         m_session->Shutdown();
         m_session.Reset();
@@ -301,10 +302,12 @@ HRESULT AudioPlayer::OpenFile(const std::wstring& path) {
         m_loading = false;
         return hr;
     }
+    m_wantPlaying = true;
     return S_OK;
 }
 
 HRESULT AudioPlayer::Play() {
+    m_wantPlaying = true;
     if (!m_session || !m_hasFile) {
         return S_FALSE;
     }
@@ -325,6 +328,7 @@ HRESULT AudioPlayer::Play() {
 }
 
 HRESULT AudioPlayer::Pause() {
+    m_wantPlaying = false;
     if (!m_session || !m_hasFile) {
         return S_FALSE;
     }
@@ -335,6 +339,7 @@ HRESULT AudioPlayer::Pause() {
 }
 
 HRESULT AudioPlayer::Stop() {
+    m_wantPlaying = false;
     if (!m_session || !m_hasFile) {
         return S_FALSE;
     }
@@ -575,6 +580,9 @@ HRESULT AudioPlayer::BuildTopology(IMFMediaSource* pSource,
     if (FAILED(hr)) {
         return hr;
     }
+    // 说明：输出设备由"按应用音频路由"决定（见 src/PerAppAudio），这里不指定端点，
+    // 让渲染器跟随本应用的默认端点。实测用 MF 显式指定端点会被虚拟声卡软件的
+    // 应用路由覆盖，所以不用那条路。
 
     ComPtr<IMFTopologyNode> pOutputNode;
     hr = MFCreateTopologyNode(MF_TOPOLOGY_OUTPUT_NODE, &pOutputNode);
@@ -611,6 +619,16 @@ HRESULT AudioPlayer::Invoke(IMFAsyncResult* pAsyncResult) {
         return S_OK;
     }
 
+    // 事件可能来自**已被替换的旧会话**（换歌、换输出设备时都会重建会话）。
+    // 用 BeginGetEvent 时传入的状态对象（会话自身）判断：不是当前会话就直接丢弃，
+    // 否则旧会话迟到的 Ended 会被当成新会话的结束事件，把正在播放的媒体清掉。
+    ComPtr<IUnknown> state;
+    if (SUCCEEDED(pAsyncResult->GetState(&state)) && state) {
+        if (state.Get() != static_cast<IUnknown*>(m_session.Get())) {
+            return S_OK;
+        }
+    }
+
     ComPtr<IMFMediaEvent> pEvent;
     HRESULT hr = m_session->EndGetEvent(pAsyncResult, &pEvent);
     if (FAILED(hr)) {
@@ -626,7 +644,7 @@ HRESULT AudioPlayer::Invoke(IMFAsyncResult* pAsyncResult) {
 
     // 重新挂接事件。
     if (!m_shutdown) {
-        m_session->BeginGetEvent(this, nullptr);
+        m_session->BeginGetEvent(this, m_session.Get());
     }
     return S_OK;
 }

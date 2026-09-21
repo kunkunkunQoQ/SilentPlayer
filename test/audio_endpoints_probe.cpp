@@ -93,8 +93,54 @@ int wmain() {
         pDef->Release();
     }
 
+    // 各角色的默认渲染端点（MF 的 SAR 用的可能不是 eConsole）
+    for (int r = 0; r < 3; ++r) {
+        const ERole role = (r == 0) ? eConsole : (r == 1) ? eMultimedia : eCommunications;
+        const wchar_t* rn = (r == 0) ? L"eConsole" : (r == 1) ? L"eMultimedia" : L"eCommunications";
+        IMMDevice* d = nullptr;
+        if (SUCCEEDED(pEnum->GetDefaultAudioEndpoint(eRender, role, &d)) && d) {
+            wprintf(L"default render [%ls]: ", rn);
+            PrintDeviceName(d, L"");
+            wprintf(L"\n");
+            d->Release();
+        } else {
+            wprintf(L"default render [%ls]: (none)\n", rn);
+        }
+    }
+
     // 全部渲染端点
     IMMDeviceCollection* pCol = nullptr;
+
+    // --- 采集端点（麦克风 / 立体声混音 等），用于判断能否把音频"送进麦克风" ---
+    {
+        IMMDeviceCollection* pCaps = nullptr;
+        const HRESULT hrC =
+            pEnum->EnumAudioEndpoints(eCapture, DEVICE_STATE_ACTIVE, &pCaps);
+        UINT nC = 0;
+        if (SUCCEEDED(hrC) && pCaps) {
+            pCaps->GetCount(&nC);
+        }
+        wprintf(L"\nactive CAPTURE endpoints: hr=0x%08lX count=%u\n",
+                (unsigned long)hrC, nC);
+        for (UINT i = 0; i < nC && pCaps; ++i) {
+            IMMDevice* pDev = nullptr;
+            if (FAILED(pCaps->Item(i, &pDev)) || !pDev) {
+                continue;
+            }
+            LPWSTR id = nullptr;
+            pDev->GetId(&id);
+            wprintf(L"  [capture] ");
+            PrintDeviceName(pDev, L"");
+            if (id) {
+                CoTaskMemFree(id);
+            }
+            pDev->Release();
+        }
+        if (pCaps) {
+            pCaps->Release();
+        }
+    }
+
     hr = pEnum->EnumAudioEndpoints(eRender, DEVICE_STATE_ACTIVE, &pCol);
     wprintf(L"active render endpoints: hr=0x%08lX\n", hr);
     if (SUCCEEDED(hr)) {

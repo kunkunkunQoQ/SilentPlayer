@@ -36,6 +36,8 @@
 - **播放结束后自动清理**：与「销毁」同一条路径（`App::DestroyMedia()`）：释放媒体、清空文件名、
   状态回到「未打开文件」、进度与时间归零、按钮禁用；音量保持、窗口尺寸不变、进程继续驻留托盘
 - **拖文件到窗口直接播放**（OLE IDropTarget，CF_HDROP）；拖到托盘图标 Windows 层面不可行（托盘窗口属于 explorer，没有投放目标）
+- **托盘「输出到麦克风」**：用**按应用音频路由**把本播放器输出切到虚拟麦克风设备（勾选）/清除回原设备（取消），
+  切换保持播放位置；启动时清除，默认"正常听歌"
 - **单 EXE 双架构**：一个 x64 的 SilentPlayer.exe，x64 Windows 原生运行，
   Windows 11 on ARM64 由系统 x64 模拟层运行（不使用 ARM64EC —— 那会失去 x64 兼容性）
 - 单实例（Named Mutex + WM_COPYDATA），新文件切换播放
@@ -109,6 +111,15 @@ main.cpp (wWinMain, DPI aware, 解析命令行)
 24. **发布产物必须是 x64**：x64 Windows 原生 + Windows 11 on ARM64 由系统 x64 模拟层运行，这样一个 EXE 覆盖两者。**ARM64EC / ARM64X 只能跑在 ARM64 上**，会破坏 x64 兼容，禁止用它们做发布产物。本项目无内联汇编/intrinsics/架构条件编译/`/arch:` 选项/第三方 DLL，因此 x64 产物在模拟层下功能完整。
 25. **文件拖放用 OLE IDropTarget，不要用 WM_DROPFILES**：WM_DROPFILES 只有 explorer 会发，第三方进程 `PostMessage` 会被 User32 以 ERROR_INVALID_HANDLE 拒绝（实测），无法验证；IDropTarget 是 shell 拖放的实际通道，注册后任何拖放源都能投递。需要 `OleInitialize`（已替代 `CoInitializeEx`），销毁时 `RevokeDragDrop`。
 26. **不要尝试让托盘图标接收拖放**：托盘图标由 explorer 绘制，光标下的窗口属于 explorer；实测 `TrayNotifyWnd` 上没有 OLE 投放目标，投放到托盘图标上的文件任何应用都收不到。
+27. **「输出到麦克风」靠按应用音频路由实现**：不能直接写进采集端点（只读），但可以改**本应用自己**的输出设备——
+   用未公开的 `IAudioPolicyConfigFactory`（WinRT `Windows.Media.Internal.AudioPolicyConfig`，
+   IID `ab3d4648-e242-459f-b02f-541c70306324`，`SetPersistedDefaultAudioEndpoint` 在 **槽位 25**，
+   前面 19 个占位必须保留；设备 ID 要包成 `\\?\SWD#MMDEVAPI#...#{e6327cad-...}` 并以 HSTRING 传入；
+   传 null = 清除；**两个角色 eConsole+eMultimedia 都要设**）。见 `src/PerAppAudio.{h,cpp}`。
+   实测：只有渲染到虚拟麦克风的**渲染侧**才会进麦克风（Gaming/Media/Aux/Chat 都不会）。
+   Sonar 等软件用的也是这套机制。
+28. **托盘菜单 ID 不连续**：`1=播放/暂停, 2=停止, 5=销毁, 6=麦克风输出提示, 3=显示播放器, 4=退出`。
+   新增项请取新 ID，不要按菜单顺序猜 ID。
 
 ## 已知问题
 
@@ -120,6 +131,7 @@ main.cpp (wWinMain, DPI aware, 解析命令行)
   残留约 2 个/次在媒体加载路径内部，无法在不改架构的前提下进一步定位。
   影响：按 +2/次计，连续打开 1000 个文件约 +2000 句柄，不影响正常使用。
 - `SingleInstance::ForwardFileToExisting` 在首实例窗口尚未创建时最多重试 2s；若仍失败，第二实例静默退出、该文件被丢弃（未做兜底重试或提示）。
+- **无法把音频"输入到麦克风"**：用户态限制（需内核驱动），本播放器只提供「麦克风输出提示」。
 - **ARM64 实机运行尚未验证**：开发环境无 ARM64 设备，本机 MSVC 只装了 x64/x86 工具链
   （无 arm64/arm64ec 库），无法产出 ARM64 产物交叉验证。已核实的是 PE 架构、依赖、
   代码中无架构相关构造，以及 Microsoft 关于 x64 模拟的官方说明。
@@ -141,6 +153,17 @@ main.cpp (wWinMain, DPI aware, 解析命令行)
 - 最小改动原则（开发.md 第 17 节）。
 
 ## 最近修改
+
+2026-09-20（托盘「麦克风输出提示」）：
+
+- 新增 `src/AudioDevices.{h,cpp}`：只读枚举渲染/采集端点（MMDevice），按名字启发式标记
+  虚拟设备 / 回环监听 / 麦克风侧，生成中文操作指引。
+- 托盘菜单新增可勾选项「麦克风输出提示」（`kCmdMicHint=6`）→ `App::ToggleMicHint()`；
+  勾选弹指引，取消不弹；状态仅本次运行有效。
+- 探针：`player_state_probe` 增加 `--michint`（触发并读出弹窗全文，UTF-8 落盘便于核对），
+  `--traydump` 显示 `[CHECKED]`。
+- 验证：菜单 8 项、勾选状态、弹窗内容（检出 4 个虚拟麦克风 + 分侧标注）、全回归、退出码 0、
+  干净重建零错误零警告、无新增 DLL。
 
 2026-09-20（拖文件到窗口直接播放）：
 

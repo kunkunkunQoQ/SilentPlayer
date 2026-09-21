@@ -10,6 +10,7 @@ enum : UINT {
     kCmdPlayPause = 1,
     kCmdStop = 2,
     kCmdDestroy = 5, // 与 App::DestroyMedia() 同一个入口
+    kCmdMicOutput = 6, // 输出到麦克风（可勾选）
     kCmdShow = 3,
     kCmdExit = 4,
 };

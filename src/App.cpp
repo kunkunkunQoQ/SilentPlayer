@@ -1,5 +1,9 @@
 #include "App.h"
 
+#include "AudioDevices.h"
+#include "PerAppAudio.h"
+#include "PerAppAudio.h"
+
 #include <commctrl.h>
 #include <shlwapi.h>
 #include <sstream>
@@ -41,6 +45,12 @@ int App::Run(HINSTANCE hInstance, const std::wstring& initialFile) {
         MessageBoxW(nullptr, L"初始化 COM 失败。", L"SilentPlayer", MB_ICONERROR);
         return 1;
     }
+
+    // 清除"本应用"的按应用音频路由设置，保证默认是"正常听歌"状态。
+    // 背景：SteelSeries Sonar 之类的软件会用同一套机制把本播放器路由到虚拟麦克风，
+    // 那样一启动就听不到声音（要开麦克风输出请用托盘菜单里的开关）。
+    // 必须早于任何音频会话创建（策略应用是异步的，与首次加载贴太近会来不及生效）。
+    PerAppAudio::ClearProcessOutputDevice(GetCurrentProcessId());
 
     // 创建播放器窗口（隐藏）与托盘。
     if (!m_window.Create(hInstance, this)) {
@@ -157,6 +167,78 @@ void App::ResetToIdle() {
 
 void App::ShowPlayerWindow() {
     m_window.Show();
+}
+
+// 重新加载当前媒体，让"按应用音频路由"的新设置生效，并尽量保持"继续听歌"的体验：
+// 记住当前位置与播放意图，重开媒体后续上（换输出设备必然有一次短暂断音）。
+void App::ReloadMedia() {
+    if (!m_hasFile || m_currentFile.empty()) {
+        return; // 没有媒体：下次打开时自然生效
+    }
+    const double pos = m_player.Position();
+    const double dur = m_player.Duration();
+    // 用"播放意图"判断，而不是事件驱动的 State()：刚重载时 Started 事件还没到，
+    // State() 会短暂是 Stopped，用它会把本该继续播放的媒体误判成需要暂停。
+    const bool wasPlaying = m_player.WantPlaying();
+    const std::wstring path = m_currentFile;
+
+    if (FAILED(m_player.OpenFile(path))) {
+        DestroyMedia();
+        m_window.SetStatus(L"无法播放该文件");
+        return;
+    }
+    m_hasFile = true;
+    m_currentFile = path;
+    if (dur > 0.0 && pos > 0.0) {
+        m_player.SeekToFraction(pos / dur); // 续上原来的位置
+    }
+    if (!wasPlaying) {
+        m_player.Pause();
+    }
+}
+
+// 「输出到麦克风」开关。
+//   开启：把播放器输出切到虚拟麦克风设备——实测只有渲染到该虚拟设备的"渲染侧"，
+//         声音才会出现在它的麦克风里（渲染到 Gaming/Media/Aux/Chat 都不会）。
+//   关闭：切回系统默认播放设备，恢复正常听歌。
+void App::ToggleMicOutput() {
+    if (m_micOutputEnabled) {
+        // 取消勾选：清除"本应用"的输出设备设置 → 回到系统默认设备，继续正常听歌。
+        PerAppAudio::ClearProcessOutputDevice(GetCurrentProcessId());
+        ReloadMedia();
+        m_micOutputEnabled = false;
+        m_micFeedEndpointName.clear();
+        return;
+    }
+
+    const std::wstring mic = AudioDevices::RecommendedMicName();
+    std::wstring id;
+    std::wstring name;
+    if (!AudioDevices::FindMicFeedEndpoint(mic, &id, &name)) {
+        MessageBoxW(m_window.Handle(),
+                    L"没有找到可用的虚拟麦克风，无法把声音送到麦克风。\n\n"
+                    L"需要先安装一个虚拟音频设备（如 VB-Cable / VoiceMeeter）。",
+                    L"SilentPlayer · 输出到麦克风", MB_OK | MB_ICONWARNING);
+        return;
+    }
+
+    // 用"按应用音频路由"把本进程的输出改到虚拟麦克风设备：
+    // 只影响本播放器，不动系统默认设备，也不影响其它应用。
+    // （SteelSeries Sonar 之类的软件用的也是这套机制，所以这能覆盖它对我们的设置。）
+    if (!PerAppAudio::SetProcessOutputDevice(GetCurrentProcessId(), id)) {
+        MessageBoxW(m_window.Handle(),
+                    L"无法设置本应用的输出设备（当前系统可能不支持该接口）。\n\n"
+                    L"可以改为手动把 Windows 默认播放设备切换成虚拟麦克风设备。",
+                    L"SilentPlayer · 输出到麦克风", MB_OK | MB_ICONWARNING);
+        return;
+    }
+    ReloadMedia(); // 让新的路由设置生效（重建音频会话）
+    m_micOutputEnabled = true;
+    m_micFeedEndpointName = name;
+
+    const std::wstring advice = AudioDevices::BuildMicRoutingAdvice(name);
+    MessageBoxW(m_window.Handle(), advice.c_str(), L"SilentPlayer · 输出到麦克风",
+                MB_OK | MB_ICONINFORMATION);
 }
 
 void App::ExitApp() {

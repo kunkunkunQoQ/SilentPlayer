@@ -66,6 +66,10 @@ public:
     double Duration() const { return m_durationSec; }
     PlayState State() const { return m_state; }
     bool HasFile() const { return m_hasFile; }
+    // "是否处于播放意图"：Play()/OpenFile() 后为 true，Pause()/Stop() 后为 false。
+    // 与 State() 不同，它不受异步事件（MESessionStarted 还没到）影响，
+    // 供"换输出设备后是否继续播放"这类判断使用。
+    bool WantPlaying() const { return m_wantPlaying; }
 
     // 事件将通过 PostMessage(msg) 发送到 hwnd，wParam = (WPARAM)AudioEvent。
     void SetEventSink(HWND hwnd, UINT msg);
@@ -120,6 +124,7 @@ private:
     PlayState m_state = PlayState::Stopped;
     bool m_hasFile = false;
     bool m_loading = false; // OpenFile 进行中，忽略旧会话的中间事件
+    bool m_wantPlaying = false; // 播放意图（见 WantPlaying()）
     bool m_shutdown = false;
 
     // 播放位置基准：Position() = 会话时钟 - m_clockBase。

@@ -481,6 +481,9 @@ void PlayerWindow::ShowTrayMenu(HWND hwnd) {
     AppendMenuW(hMenu, MF_STRING, kCmdPlayPause, m_playing ? L"暂停" : L"播放");
     AppendMenuW(hMenu, MF_STRING, kCmdStop, L"停止");
     AppendMenuW(hMenu, MF_STRING, kCmdDestroy, L"销毁");
+    // 输出到麦克风：勾选后播放器把声音送到虚拟麦克风，取消则切回原设备继续正常听。
+    AppendMenuW(hMenu, MF_STRING | (m_app->MicOutputEnabled() ? MF_CHECKED : 0),
+                kCmdMicOutput, L"输出到麦克风");
     AppendMenuW(hMenu, MF_SEPARATOR, 0, nullptr);
     AppendMenuW(hMenu, MF_STRING, kCmdShow, L"显示播放器");
     AppendMenuW(hMenu, MF_SEPARATOR, 0, nullptr);
@@ -501,6 +504,9 @@ void PlayerWindow::ShowTrayMenu(HWND hwnd) {
         break;
     case kCmdDestroy:
         m_app->DestroyMedia(); // 与 UI「销毁」按钮同一个入口
+        break;
+    case kCmdMicOutput:
+        m_app->ToggleMicOutput();
         break;
     case kCmdShow:
         m_app->ShowPlayerWindow();

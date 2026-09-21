@@ -31,6 +31,12 @@ public:
     void DestroyMedia();
     void ShowPlayerWindow();
     void ExitApp();
+    // 「输出到麦克风」开关：
+    //   开启 → 把播放器的输出设备切到虚拟麦克风设备（实测只有渲染到它才会进麦克风），
+    //          这样语音里的朋友能听到你放的歌；
+    //   关闭 → 切回原来的播放设备（系统默认），你可以继续正常听歌。
+    void ToggleMicOutput();
+    bool MicOutputEnabled() const { return m_micOutputEnabled; }
     void SeekToFraction(double fraction);
     void SetVolume(float volume);
     void OnProgressTick(); // 定时器：刷新进度
@@ -53,4 +59,11 @@ private:
     std::wstring m_currentFile;
     bool m_hasFile = false;
     bool m_exiting = false;
+    // 「输出到麦克风」是否已开启（仅本次运行有效，不写盘）。
+    bool m_micOutputEnabled = false;
+    // 进麦克风的输出端点（开启时记录，供界面显示）。
+    std::wstring m_micFeedEndpointName;
+    // 重新加载当前媒体，让"按应用音频路由"的新设置生效，并保持播放位置与播放状态。
+    // （换输出设备必然要重建音频会话，所以必须重载一次。）
+    void ReloadMedia();
 };

@@ -112,6 +112,7 @@ cl /nologo /EHsc test\xxx.cpp
 | player_state_probe | 读取运行中实例的文件名 / 播放状态 / 当前时间 / 总时长 / 进度条位置 / 界面音量 / **会话实际音量**，并读取该进程在所有活动端点上的音频峰值；可模拟操作：`--toggle=i`（播放/暂停）、`--seek=i:pct`（拖动进度条）、`--volume=i:v`（音量滑块）、`--close=i`（关闭窗口）；`--dump` 打印布局几何并检测控件重叠 |
 | window_shot | 把播放器窗口截图保存为 24 位 BMP，用于目视核对布局 |
 | audio_loopback_probe | WASAPI 环回采集指定进程所连端点的**真实渲染幅度**（peak / RMS），用于验证音量等只能靠听感判断的功能 |
+| audio_capture_probe | 从指定**采集端点**（麦克风/虚拟麦克风）录音并测 peak/rms，用于验证「声音是否真的进了虚拟麦克风」 |
 | proc_mem_probe | 打印指定进程的工作集 / 私有内存 / 峰值 / 句柄 / 线程 / GDI / USER 对象数，用于内存与资源泄漏回归 |
 | mf_codec_probe | 枚举本机 Media Foundation 的音频解码器与编码器，确认哪些格式原生可用 |
 | mf_load_cycle_probe | 隔离复现 MF 的加载/释放循环，把泄漏精确定位到 resolve / topology / session 某一层 |
@@ -158,12 +159,29 @@ drop_probe.exe selftest <file>  :: 校验 DROPFILES 结构与 DragQueryFile 解�
 合成 OLE 拖放（`drag_probe --synthetic`）能让目标收到 `DragEnter`/`DragOver`/`Drop`，
 但无法稳定把投放落到指定窗口，**真实拖放的最终体验仍需人工用鼠标验证**。
 
+### 虚拟麦克风链路验证
+
+```bat
+audio_capture_probe.exe "Sonar - Microphone" 3000   :: 播放中采集，应看到 peak > 0
+:: 对照组：播放器未播放时再测一次，应为 0.0000（精确数字静音 = 不是环境噪声）
+```
+
+判定：播放时有信号、未播放时是 0.0000 → 说明声音走的是数字路由，链路已通。
+
+### 批量测试的时序陷阱（踩过两次）
+
+`taskkill /F` 之后**必须等 ≥2.5s** 再启动下一个实例。否则新实例会把文件转发给
+**正在退出的旧实例**（单实例机制），该文件被丢弃，探针就会读到 `BADFILE` / `NOFILE`
+之类的**假失败**——看起来像"格式支持坏了"或"代码回归"，其实只是时序。
+单次手动启动（无 taskkill）不受影响。
+
 ### 内存回归流程
 
 ```bat
 SilentPlayer.exe test\samples\t.mp3
 proc_mem_probe.exe <pid> 起始
 :: 连续切歌若干次后再测；工作集/私有内存应封顶而不是线性增长
+:: 注意：taskkill 后要等 ≥2.5s 再启动下一个实例，否则会读到假失败（见下）
 proc_mem_probe.exe <pid> N次后
 ```
 
