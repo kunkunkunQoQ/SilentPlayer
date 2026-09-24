@@ -52,3 +52,18 @@ void TrayIcon::SetTooltip(const std::wstring& text) {
     wcsncpy_s(nid.szTip, text.c_str(), _TRUNCATE);
     Shell_NotifyIconW(NIM_MODIFY, &nid);
 }
+
+void TrayIcon::ShowBalloon(const std::wstring& title, const std::wstring& text) {
+    if (!m_added) {
+        return;
+    }
+    NOTIFYICONDATAW nid = {};
+    nid.cbSize = sizeof(NOTIFYICONDATAW);
+    nid.hWnd = m_hwnd;
+    nid.uID = kTrayIconId;
+    nid.uFlags = NIF_INFO;
+    nid.dwInfoFlags = NIIF_NOSOUND; // 保持静默：不播提示音
+    wcsncpy_s(nid.szInfoTitle, title.c_str(), _TRUNCATE);
+    wcsncpy_s(nid.szInfo, text.c_str(), _TRUNCATE);
+    Shell_NotifyIconW(NIM_MODIFY, &nid);
+}

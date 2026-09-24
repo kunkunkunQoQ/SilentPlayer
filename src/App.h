@@ -19,7 +19,10 @@ public:
     ~App() = default;
 
     // 入口：单实例检查 → 初始化 → 消息循环。
-    int Run(HINSTANCE hInstance, const std::wstring& initialFile);
+    // initialFile：要播放的文件（空 = 只驻留托盘）。
+    // initialCommand：控制命令（如 "toggle"），仅在已有实例运行时转发，随后本进程退出。
+    int Run(HINSTANCE hInstance, const std::wstring& initialFile,
+            const std::wstring& initialCommand = std::wstring());
 
     // 由 PlayerWindow 调用的命令入口。
     void LoadFile(const std::wstring& path); // 空路径 = 仅显示窗口
@@ -37,6 +40,16 @@ public:
     //   关闭 → 切回原来的播放设备（系统默认），你可以继续正常听歌。
     void ToggleMicOutput();
     bool MicOutputEnabled() const { return m_micOutputEnabled; }
+    // 打开"选择音频文件"对话框（托盘菜单「打开文件…」）。
+    void OpenFileDialog();
+    // 启动后修正输出路由：清除"按应用路由"设置并重载，确保默认走系统默认设备。
+    void FixupOutputRouting();
+    // 启动修正用的定时器 id。
+    static constexpr UINT_PTR kOutputFixTimerId = 2;
+    // 执行一条来自命令行/IPC 的控制命令：toggle / stop / show / exit / volume=<0-100>。
+    void RunCommand(const std::wstring& command);
+    // 窗口被隐藏到托盘时的一次性提示（仅本次运行提示一次）。
+    void NotifyHiddenToTray();
     void SeekToFraction(double fraction);
     void SetVolume(float volume);
     void OnProgressTick(); // 定时器：刷新进度
@@ -46,6 +59,14 @@ public:
 
 private:
     void RefreshProgress();
+    // 状态副标题 + 托盘提示统一在这里生成（顺带带上"输出到麦克风"模式）。
+    void SetStatusText(const std::wstring& base);
+    // 在当前音量上增减（滚轮用），自动钳制到 0~1。
+    void AdjustVolume(float delta);
+    // 键盘快捷键（空格/左右箭头/Esc）。返回 true 表示已处理。
+    bool HandleShortcut(WPARAM vk);
+    // 相对当前位置快退/快进若干秒（复用已验证的 SeekToFraction）。
+    void SeekBy(double deltaSeconds);
     // 回到“未打开文件”的空闲状态（清文件引用、清 UI、禁用控件；音量不变）。
     // 释放媒体由调用方负责，销毁/播放结束/出错/打开失败共用这一个重置逻辑。
     void ResetToIdle();
@@ -57,6 +78,10 @@ private:
     TrayIcon m_tray;
 
     std::wstring m_currentFile;
+    // 当前状态基文本（不含"输出到麦克风"后缀），供切换模式时重新拼装。
+    std::wstring m_statusBase;
+    // 本次运行是否已经提示过"关闭窗口后仍在后台播放"。
+    bool m_closeHintShown = false;
     bool m_hasFile = false;
     bool m_exiting = false;
     // 「输出到麦克风」是否已开启（仅本次运行有效，不写盘）。

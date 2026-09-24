@@ -25,6 +25,14 @@ bool SingleInstance::Acquire() {
 }
 
 bool SingleInstance::ForwardFileToExisting(const std::wstring& path) {
+    return SendToExisting(kSilentPlayerCopyDataMagic, path);
+}
+
+bool SingleInstance::ForwardCommand(const std::wstring& command) {
+    return SendToExisting(kSilentPlayerCommandMagic, command);
+}
+
+bool SingleInstance::SendToExisting(DWORD magic, const std::wstring& payload) {
     HWND hwnd = nullptr;
     for (int i = 0; i < kFindWindowRetries && !hwnd; ++i) {
         hwnd = FindWindowW(kSilentPlayerWindowClass, nullptr);
@@ -37,9 +45,9 @@ bool SingleInstance::ForwardFileToExisting(const std::wstring& path) {
     }
 
     COPYDATASTRUCT cds = {};
-    cds.dwData = kSilentPlayerCopyDataMagic;
-    cds.cbData = static_cast<DWORD>((path.size() + 1) * sizeof(wchar_t));
-    cds.lpData = const_cast<wchar_t*>(path.c_str());
+    cds.dwData = magic;
+    cds.cbData = static_cast<DWORD>((payload.size() + 1) * sizeof(wchar_t));
+    cds.lpData = const_cast<wchar_t*>(payload.c_str());
     return SendMessageW(hwnd, WM_COPYDATA, reinterpret_cast<WPARAM>(nullptr),
                         reinterpret_cast<LPARAM>(&cds)) == TRUE;
 }

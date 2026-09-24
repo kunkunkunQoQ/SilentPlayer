@@ -170,10 +170,52 @@ audio_capture_probe.exe "Sonar - Microphone" 3000   :: 播放中采集，应看�
 
 ### 批量测试的时序陷阱（踩过两次）
 
-`taskkill /F` 之后**必须等 ≥2.5s** 再启动下一个实例。否则新实例会把文件转发给
-**正在退出的旧实例**（单实例机制），该文件被丢弃，探针就会读到 `BADFILE` / `NOFILE`
-之类的**假失败**——看起来像"格式支持坏了"或"代码回归"，其实只是时序。
-单次手动启动（无 taskkill）不受影响。
+`taskkill /F` 之后**不能只靠固定 sleep**（2.5s 也不总够），要**等进程真正消失**再启动下一个实例：
+
+```bash
+wait_gone() { for i in $(seq 1 60); do tasklist 2>/dev/null | grep -qi silentplayer || return 0; sleep 0.25; done; }
+taskkill /F /IM SilentPlayer.exe >/dev/null 2>&1; wait_gone
+```
+
+否则新实例会把文件转发给**正在退出的旧实例**（单实例机制），旧实例在关闭过程中加载失败，
+探针就会读到 `BADFILE` / `NOFILE` 之类的**假失败**——看起来像"格式支持坏了"或"代码回归"，
+其实只是时序（本项目已因此误判过三次）。单次手动启动（无 taskkill）不受影响。
+
+### 格式矩阵的"自诊断"写法（推荐）
+
+跑批量格式时，**一旦出现非预期失败就立刻抓错误码**，否则事后无法定位：
+
+```bash
+run_one() {            # $1 = 文件名（不含路径）
+  taskkill /F /IM SilentPlayer.exe >/dev/null 2>&1; wait_gone
+  rm -f build/_dlg.txt
+  ./build/SilentPlayer.exe "$SAMPLES\\$1" &
+  sleep 2.0
+  st=$(./test/player_state_probe.exe 1 150 2>&1 | tail -1)
+  echo "$1 -> $(echo "$st" | sed 's/^ *[0-9]* | //' | cut -c1-40)"
+  if echo "$st" | grep -q BADFILE && [ "$1" != "broken.mp3" ]; then
+    ./test/dlg_detail.exe >/dev/null 2>&1      # 会把弹窗文本以 UTF-8 落到 build/_dlg.txt
+    echo "    !! 非预期失败，错误码："; cat build/_dlg.txt 2>/dev/null | tail -3
+  fi
+}
+```
+
+> 已知现象（**未复现、原因未定**）：极少数情况下整批格式会**全部**报 BADFILE，
+> 且只在"干净重建后紧接着跑"时出现过；重跑即恢复。因为抓不到当时的错误码，
+> 暂记为环境瞬时问题。上面这个自诊断写法就是为了下次能直接看到原因。
+
+### 传路径给应用的坑（MSYS 会改反斜杠）
+
+```bash
+S="E:////kunkun////slientPlayer////test////samples"   # 双反斜杠
+./build/SilentPlayer.exe "$S\\t.mp3"             # 实际传出的是 E://kunkun//...（被 MSYS 变成正斜杠）
+```
+
+**推荐**：直接用 Windows 原生路径（单反斜杠），既不被转换也更接近真实用户场景：
+
+```bash
+./build/SilentPlayer.exe "E://kunkun//slientPlayer//test//samples//t.mp3"
+```
 
 ### 内存回归流程
 
@@ -210,9 +252,20 @@ player_state_probe.exe 6 600 --trayitem=2:2 :: 点托盘菜单第 2 个可选项
 用于自动化验证「换歌后播放是否真的重启、进度是否归零、暂停/继续、拖动进度、关闭窗口后台播放、
 销毁（UI 与托盘两条路径）」，不需要人耳判断。探针自身是 DPI 感知的，`--dump` 输出的坐标是真实物理像素。
 
-`--trayitem` 的两个注意点：
+`--trayitem=<采样点>:<菜单位置>` 按**菜单项的屏幕坐标直接点击**（不是键盘导航）：
+键盘下移的计数会受"分隔符/禁用项是否可导航"影响而错位，坐标点击完全确定。
+
 - 菜单窗口不是普通窗口，取 HMENU 要用 `MN_GETHMENU`（`GetMenu` 拿不到）。
-- 菜单刚打开时没有选中项，第一次 `VK_DOWN` 才落到第 0 项，所以激活第 N 项要按 **N+1** 次下移。
+- **位置是"菜单里的第几项"（0 起，含分隔符与禁用项）**，用 `--traydump` 看实际位置；
+  位置会随"当前有没有加载文件"变化（顶部文件名项时有时无）。
+- 其他新增模式：`--wheel=<刻度>`（滚轮投给主窗口）、`--wheelchild=<刻度>`（滚轮投给**进度条**，
+  用于验证"光标在子控件上"的情形）、`--key=space|left|right|esc`、`--clickprogress=<pct>`、
+  `--clickvolume=<pct>`、`--openfile`（触发托盘「打开文件…」并确认对话框弹出）、
+  `--trayleft`、`--hotkeycheck`。
+- `--dump` 会把控件清单以 UTF-8 落盘到 `build/_controls.txt`，便于核对中文文本。
+
+托盘相关的另一个探针：`tray_probe.exe rect`（打印托盘图标矩形）、
+`tray_probe.exe hover <bmp>`（悬停并截取该区域，用于看 tooltip/气泡这类"只能看"的行为）。
 
 `audio_loopback_probe` 用法：
 

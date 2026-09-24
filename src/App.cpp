@@ -1,7 +1,8 @@
 #include "App.h"
 
 #include "AudioDevices.h"
-#include "PerAppAudio.h"
+
+#include <shobjidl.h> // IFileOpenDialog（选择音频文件）
 #include "PerAppAudio.h"
 
 #include <commctrl.h>
@@ -16,6 +17,26 @@ std::wstring FileNameFromPath(const std::wstring& path) {
     return (pos == std::wstring::npos) ? path : path.substr(pos + 1);
 }
 
+// 把常见错误码翻译成人话（用户看不懂十六进制）。
+std::wstring ExplainError(HRESULT hr) {
+    switch (static_cast<unsigned long>(hr)) {
+    case 0xC00D36C4u:
+        return L"（格式不受支持，或文件已损坏）";
+    case 0xC00D36B4u:
+        return L"（文件内容与扩展名不符，或编码方式不支持）";
+    case 0xC00D36B3u:
+        return L"（文件不完整或已损坏）";
+    case 0x80070002u:
+        return L"（找不到该文件）";
+    case 0x80070005u:
+        return L"（没有访问权限）";
+    case 0x80070020u:
+        return L"（文件正被其它程序占用）";
+    default:
+        return L"";
+    }
+}
+
 std::wstring HexError(HRESULT hr) {
     std::wostringstream oss;
     oss << L"0x" << std::hex << std::uppercase << static_cast<unsigned long>(hr);
@@ -24,12 +45,17 @@ std::wstring HexError(HRESULT hr) {
 
 } // namespace
 
-int App::Run(HINSTANCE hInstance, const std::wstring& initialFile) {
+int App::Run(HINSTANCE hInstance, const std::wstring& initialFile,
+             const std::wstring& initialCommand) {
     m_hInstance = hInstance;
 
-    // 单实例：已有实例则转发文件路径后直接退出。
+    // 单实例：已有实例则把文件路径或控制命令转发过去，然后本进程直接退出。
     if (!m_singleInstance.Acquire()) {
-        m_singleInstance.ForwardFileToExisting(initialFile);
+        if (!initialCommand.empty()) {
+            m_singleInstance.ForwardCommand(initialCommand);
+        } else {
+            m_singleInstance.ForwardFileToExisting(initialFile);
+        }
         return 0;
     }
 
@@ -45,12 +71,6 @@ int App::Run(HINSTANCE hInstance, const std::wstring& initialFile) {
         MessageBoxW(nullptr, L"初始化 COM 失败。", L"SilentPlayer", MB_ICONERROR);
         return 1;
     }
-
-    // 清除"本应用"的按应用音频路由设置，保证默认是"正常听歌"状态。
-    // 背景：SteelSeries Sonar 之类的软件会用同一套机制把本播放器路由到虚拟麦克风，
-    // 那样一启动就听不到声音（要开麦克风输出请用托盘菜单里的开关）。
-    // 必须早于任何音频会话创建（策略应用是异步的，与首次加载贴太近会来不及生效）。
-    PerAppAudio::ClearProcessOutputDevice(GetCurrentProcessId());
 
     // 创建播放器窗口（隐藏）与托盘。
     if (!m_window.Create(hInstance, this)) {
@@ -71,14 +91,40 @@ int App::Run(HINSTANCE hInstance, const std::wstring& initialFile) {
         return 1;
     }
 
-    // 命令行携带文件则自动加载播放。
+    // 先清除"本应用"的按应用音频路由设置，再延迟加载首个文件。
+    // 背景：SteelSeries Sonar 之类的软件会用同一套机制把本播放器路由到虚拟麦克风；
+    // 若上次是"输出到麦克风"状态被强制结束（崩溃/任务管理器结束），设置会残留在系统里，
+    // 下次启动就会听不到声音。
+    // 注意：清除是**异步生效**的，所以不能"清完立刻加载"（来不及，会仍走麦克风），
+    // 也不适合"加载后再重载"（重载与首次加载挨太近会偶发失败并报 BADFILE）。
+    // 启动时先清一次（大多数情况下这样就够了），并立刻加载首个文件让用户尽快听到声音。
+    PerAppAudio::ClearProcessOutputDevice(GetCurrentProcessId());
     if (!initialFile.empty()) {
         LoadFile(initialFile);
+        // 再安排一次"修正"：SteelSeries Sonar 这类软件会在**本进程启动时**重新应用它自己的
+        // 路由设置（晚于我们上面的清除），所以首次加载后再清一次并重载才能落到系统默认设备。
+        // 这里与托盘开关的关闭路径完全一致（清设置 + ReloadMedia），只是延迟到首次加载稳定之后，
+        // 避免与首次加载挨太近导致重载失败。
+        SetTimer(m_window.Handle(), kOutputFixTimerId, 900, nullptr);
     }
 
     // 消息循环。
+    // 键盘快捷键在这里统一拦截：无论焦点在窗口还是某个子控件上都生效
+    // （本程序没有文本输入，不存在与输入冲突的问题）。
     MSG msg{};
     while (GetMessageW(&msg, nullptr, 0, 0) > 0) {
+        if (msg.message == WM_KEYDOWN && HandleShortcut(msg.wParam)) {
+            continue;
+        }
+        if (msg.message == WM_MOUSEWHEEL) {
+            // 滚轮统一调音量：无论光标落在窗口的哪个控件上（进度条 / 音量条 / 按钮）都一样。
+            // 顺带避免 trackbar 在进度条上把滚轮当成"挪滑块"，从而意外改掉播放位置。
+            const int delta = GET_WHEEL_DELTA_WPARAM(msg.wParam);
+            if (delta != 0) {
+                AdjustVolume(delta > 0 ? 0.05f : -0.05f);
+            }
+            continue;
+        }
         TranslateMessage(&msg);
         DispatchMessageW(&msg);
     }
@@ -109,9 +155,10 @@ void App::LoadFile(const std::wstring& path) {
         // 不影响后续打开其它文件。
         m_player.CloseMedia();
         ResetToIdle();
-        m_window.SetStatus(L"无法播放该文件");
+        SetStatusText(L"无法播放该文件");
         std::wstring msg =
-            L"无法打开文件：\n" + path + L"\n\n错误码：" + HexError(hr);
+            L"无法打开文件：\n" + path + L"\n\n错误码：" + HexError(hr) + L" " +
+            ExplainError(hr);
         MessageBoxW(m_window.Handle(), msg.c_str(), L"SilentPlayer", MB_ICONERROR);
         return;
     }
@@ -119,7 +166,7 @@ void App::LoadFile(const std::wstring& path) {
     m_currentFile = path;
     m_hasFile = true;
     m_window.SetFileName(FileNameFromPath(path));
-    m_window.SetStatus(L"正在播放");
+    SetStatusText(L"正在播放");
     m_window.SetControlsEnabled(true);
     // 自动播放，最终状态以 Started 事件为准。
     m_window.SetPlayState(true);
@@ -165,6 +212,49 @@ void App::ResetToIdle() {
     m_window.ClearMedia(); // 文件名/状态/进度/时间归零；音量与窗口尺寸不变
 }
 
+void App::FixupOutputRouting() {
+    // 清除本应用的路由设置并重载，让声音回到系统默认设备（"正常听歌"状态）。
+    PerAppAudio::ClearProcessOutputDevice(GetCurrentProcessId());
+    ReloadMedia();
+}
+
+// 在当前音量上增减（滚轮用），钳制到 0~1。
+void App::AdjustVolume(float delta) {
+    float v = m_player.GetVolume() + delta;
+    v = (v < 0.0f) ? 0.0f : (v > 1.0f ? 1.0f : v);
+    SetVolume(v);
+}
+
+// 托盘菜单「打开文件…」：用系统文件对话框选一个音频文件并播放。
+void App::OpenFileDialog() {
+    ComPtr<IFileOpenDialog> dialog;
+    if (FAILED(CoCreateInstance(CLSID_FileOpenDialog, nullptr, CLSCTX_INPROC_SERVER,
+                                IID_PPV_ARGS(&dialog)))) {
+        return;
+    }
+    const COMDLG_FILTERSPEC filters[] = {
+        {L"音频文件", L"*.mp3;*.wav;*.mp4;*.m4a;*.aac;*.flac;*.wma"},
+        {L"所有文件", L"*.*"},
+    };
+    dialog->SetFileTypes(ARRAYSIZE(filters), filters);
+    dialog->SetTitle(L"打开音频文件");
+    // 以主窗口为属主；窗口隐藏时也能正常弹出。
+    if (FAILED(dialog->Show(m_window.Handle()))) {
+        return; // 用户取消
+    }
+    ComPtr<IShellItem> item;
+    if (FAILED(dialog->GetResult(&item))) {
+        return;
+    }
+    PWSTR path = nullptr;
+    if (FAILED(item->GetDisplayName(SIGDN_FILESYSPATH, &path)) || !path) {
+        return;
+    }
+    const std::wstring file = path;
+    CoTaskMemFree(path);
+    LoadFile(file);
+}
+
 void App::ShowPlayerWindow() {
     m_window.Show();
 }
@@ -184,7 +274,7 @@ void App::ReloadMedia() {
 
     if (FAILED(m_player.OpenFile(path))) {
         DestroyMedia();
-        m_window.SetStatus(L"无法播放该文件");
+        SetStatusText(L"无法播放该文件");
         return;
     }
     m_hasFile = true;
@@ -208,6 +298,7 @@ void App::ToggleMicOutput() {
         ReloadMedia();
         m_micOutputEnabled = false;
         m_micFeedEndpointName.clear();
+        SetStatusText(m_statusBase); // 去掉副标题里的模式后缀
         return;
     }
 
@@ -235,6 +326,7 @@ void App::ToggleMicOutput() {
     ReloadMedia(); // 让新的路由设置生效（重建音频会话）
     m_micOutputEnabled = true;
     m_micFeedEndpointName = name;
+    SetStatusText(m_statusBase); // 副标题加上模式后缀，避免用户以为"没声音了"
 
     const std::wstring advice = AudioDevices::BuildMicRoutingAdvice(name);
     MessageBoxW(m_window.Handle(), advice.c_str(), L"SilentPlayer · 输出到麦克风",
@@ -246,6 +338,8 @@ void App::ExitApp() {
         return;
     }
     m_exiting = true;
+    // 清掉"按应用音频路由"设置：开着「输出到麦克风」退出时不在系统里留下持久化设置。
+    PerAppAudio::ClearProcessOutputDevice(GetCurrentProcessId());
     m_tray.Destroy();
     m_window.Hide();
     DestroyWindow(m_window.Handle()); // WM_DESTROY → PostQuitMessage
@@ -270,6 +364,96 @@ void App::OnProgressTick() {
     if (m_window.IsVisible()) {
         RefreshProgress();
     }
+}
+
+// 状态文本统一入口：副标题带"输出到麦克风"模式后缀，托盘提示带文件名与状态。
+void App::SetStatusText(const std::wstring& base) {
+    m_statusBase = base;
+    std::wstring subtitle = base;
+    // 只有真正在播放某个文件时才加模式后缀：空闲时"未打开文件 · 输出到麦克风"读起来别扭。
+    if (m_micOutputEnabled && m_hasFile) {
+        subtitle += L" · 输出到麦克风";
+    }
+    m_window.SetStatus(subtitle);
+
+    std::wstring tip = L"SilentPlayer";
+    if (m_hasFile && !m_currentFile.empty()) {
+        tip += L" — " + FileNameFromPath(m_currentFile) + L"（" + base + L"）";
+    }
+    m_tray.SetTooltip(tip);
+}
+
+// 相对当前位置快退/快进（秒），钳制在 [0, 时长]。
+void App::SeekBy(double deltaSeconds) {
+    if (!m_hasFile) {
+        return;
+    }
+    const double duration = m_player.Duration();
+    if (duration <= 0.0) {
+        return;
+    }
+    double pos = m_player.Position();
+    if (pos < 0.0) {
+        pos = 0.0;
+    }
+    pos += deltaSeconds;
+    if (pos < 0.0) {
+        pos = 0.0;
+    }
+    if (pos > duration) {
+        pos = duration;
+    }
+    SeekToFraction(pos / duration);
+}
+
+// 键盘快捷键：空格 = 播放/暂停，←/→ = 快退/快进 5 秒，Esc = 隐藏窗口。
+bool App::HandleShortcut(WPARAM vk) {
+    switch (vk) {
+    case VK_SPACE:
+        TogglePlayPause();
+        return true;
+    case VK_LEFT:
+        SeekBy(-5.0);
+        return true;
+    case VK_RIGHT:
+        SeekBy(5.0);
+        return true;
+    case VK_ESCAPE:
+        m_window.Hide(); // 与点关闭按钮一样：只是隐藏，继续后台播放
+        return true;
+    default:
+        return false;
+    }
+}
+
+// 命令行 / IPC 控制命令。便于脚本、快捷键工具、Stream Deck 等外部触发。
+void App::RunCommand(const std::wstring& command) {
+    if (command == L"toggle") {
+        TogglePlayPause();
+    } else if (command == L"stop") {
+        Stop();
+    } else if (command == L"show") {
+        ShowPlayerWindow();
+    } else if (command == L"exit") {
+        ExitApp();
+    } else if (command.rfind(L"volume=", 0) == 0) {
+        // 非法值（如 --volume=abc）忽略，而不是被 _wtoi 当成 0 静音。
+        wchar_t* end = nullptr;
+        const long percent = wcstol(command.c_str() + 7, &end, 10);
+        if (end && end != command.c_str() + 7 && *end == L'\0') {
+            const long clamped = percent < 0 ? 0 : (percent > 100 ? 100 : percent);
+            SetVolume(static_cast<float>(clamped) / 100.0f);
+        }
+    }
+}
+
+// 关闭窗口后的一次性提示：避免用户以为程序已退出（仅本次运行提示一次）。
+void App::NotifyHiddenToTray() {
+    if (m_closeHintShown) {
+        return;
+    }
+    m_closeHintShown = true;
+    m_tray.ShowBalloon(L"SilentPlayer", L"仍在后台播放，左键托盘图标可再次打开。");
 }
 
 void App::RefreshProgress() {
@@ -303,18 +487,18 @@ void App::OnAudioEvent(AudioEvent ev, HRESULT status, unsigned generation) {
 
     case AudioEvent::Started:
         m_window.SetPlayState(true);
-        m_window.SetStatus(L"正在播放");
+        SetStatusText(L"正在播放");
         RefreshProgress();
         break;
 
     case AudioEvent::Paused:
         m_window.SetPlayState(false);
-        m_window.SetStatus(L"已暂停");
+        SetStatusText(L"已暂停");
         break;
 
     case AudioEvent::Stopped:
         m_window.SetPlayState(false);
-        m_window.SetStatus(L"已停止");
+        SetStatusText(L"已停止");
         m_window.RefreshPlayback(0.0, 0.0, m_player.Duration());
         break;
 
@@ -327,9 +511,10 @@ void App::OnAudioEvent(AudioEvent ev, HRESULT status, unsigned generation) {
     case AudioEvent::Error:
         // 出错同样释放资源并回到空闲状态，保证之后还能正常打开别的文件。
         DestroyMedia();
-        m_window.SetStatus(L"播放出错");
+        SetStatusText(L"播放出错");
         {
-            std::wstring msg = L"播放发生错误。\n\n错误码：" + HexError(status);
+            std::wstring msg = L"播放发生错误。\n\n错误码：" + HexError(status) +
+                               L" " + ExplainError(status);
             MessageBoxW(m_window.Handle(), msg.c_str(), L"SilentPlayer",
                         MB_ICONERROR);
         }

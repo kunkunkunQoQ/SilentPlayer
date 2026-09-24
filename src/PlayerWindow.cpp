@@ -91,6 +91,10 @@ void PlayerWindow::Show() {
         ShowWindow(m_hwnd, SW_RESTORE);
     }
     ShowWindow(m_hwnd, SW_SHOW);
+    // SetForegroundWindow 在"调用进程不是前台进程"时会被系统拒绝（例如从托盘菜单弹出后），
+    // 用置顶兜底，避免窗口弹在别的窗口后面。
+    BringWindowToTop(m_hwnd);
+    SetWindowPos(m_hwnd, HWND_TOP, 0, 0, 0, 0, SWP_NOMOVE | SWP_NOSIZE);
     SetForegroundWindow(m_hwnd);
     StartTimerIfVisible();
 }
@@ -111,6 +115,15 @@ void PlayerWindow::StartTimerIfVisible() {
 // --- UI 更新 -------------------------------------------------------------
 
 void PlayerWindow::SetFileName(const std::wstring& fileName) {
+    m_fileName = fileName;
+    if (m_hTip && m_hFile) {
+        TOOLINFOW ti = {};
+        ti.cbSize = sizeof(ti);
+        ti.hwnd = m_hwnd;
+        ti.uId = reinterpret_cast<UINT_PTR>(m_hFile);
+        ti.lpszText = const_cast<wchar_t*>(fileName.c_str());
+        SendMessageW(m_hTip, TTM_UPDATETIPTEXTW, 0, reinterpret_cast<LPARAM>(&ti));
+    }
     if (m_hFile) {
         SetWindowTextW(m_hFile, fileName.c_str());
     }
@@ -190,6 +203,66 @@ void PlayerWindow::SetControlsEnabled(bool enabled) {
         EnableWindow(m_hDestroy, enabled ? TRUE : FALSE);
     }
 }
+
+// 进度条/音量条子类化：点轨道任意位置直接跳到该位置。
+// 原生 trackbar 点轨道只会把滑块挪一页；这里改成"点哪跳哪"，
+// 然后按 TB_ENDTRACK 通知父窗口 —— 走与"拖动结束"完全相同的处理路径，
+// 不新增第二条逻辑（进度条→seek，音量条→SetVolume）。
+namespace {
+WNDPROC g_progressOldProc = nullptr;
+WNDPROC g_volumeOldProc = nullptr;
+
+void JumpTrackToX(HWND bar, int x) {
+    RECT thumb{};
+    RECT channel{};
+    SendMessageW(bar, TBM_GETTHUMBRECT, 0, reinterpret_cast<LPARAM>(&thumb));
+    SendMessageW(bar, TBM_GETCHANNELRECT, 0, reinterpret_cast<LPARAM>(&channel));
+    const int thumbW = thumb.right - thumb.left;
+    const int span = (channel.right - channel.left) - thumbW;
+    if (span <= 0) {
+        return;
+    }
+    int rel = x - channel.left - thumbW / 2;
+    if (rel < 0) {
+        rel = 0;
+    }
+    if (rel > span) {
+        rel = span;
+    }
+    const int lo = static_cast<int>(SendMessageW(bar, TBM_GETRANGEMIN, 0, 0));
+    const int hi = static_cast<int>(SendMessageW(bar, TBM_GETRANGEMAX, 0, 0));
+    const int pos = lo + (hi - lo) * rel / span;
+
+    SendMessageW(bar, TBM_SETPOS, TRUE, pos);
+    HWND parent = GetParent(bar);
+    // 先按"拖动中"通知一次（进度条据此更新标签），再按"拖动结束"通知一次（真正生效）。
+    SendMessageW(parent, WM_HSCROLL, MAKEWPARAM(TB_THUMBTRACK, pos),
+                 reinterpret_cast<LPARAM>(bar));
+    SendMessageW(parent, WM_HSCROLL, MAKEWPARAM(TB_ENDTRACK, pos),
+                 reinterpret_cast<LPARAM>(bar));
+}
+
+// 两个控件各用一份子类化过程（不借用 GWLP_USERDATA，避免与控件自身用途冲突）。
+LRESULT CALLBACK ProgressSubclassProc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) {
+    if (msg == WM_LBUTTONDOWN) {
+        // 先让原生处理跑（它会开始拖动跟踪），再立刻把位置改到点击处，
+        // 这样"点哪跳哪"和"按住继续拖动"都可用。
+        const LRESULT r = CallWindowProcW(g_progressOldProc, hwnd, msg, wp, lp);
+        JumpTrackToX(hwnd, static_cast<short>(LOWORD(lp)));
+        return r;
+    }
+    return CallWindowProcW(g_progressOldProc, hwnd, msg, wp, lp);
+}
+
+LRESULT CALLBACK VolumeSubclassProc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) {
+    if (msg == WM_LBUTTONDOWN) {
+        const LRESULT r = CallWindowProcW(g_volumeOldProc, hwnd, msg, wp, lp);
+        JumpTrackToX(hwnd, static_cast<short>(LOWORD(lp)));
+        return r;
+    }
+    return CallWindowProcW(g_volumeOldProc, hwnd, msg, wp, lp);
+}
+} // namespace
 
 // --- OLE 拖放目标：把文件拖到窗口上直接播放 --------------------------------
 // 用 IDropTarget 而不是旧的 WM_DROPFILES：
@@ -405,6 +478,22 @@ void PlayerWindow::CreateControls(HWND hwnd) {
                    Scale(16), contentW, Scale(22),
                    reinterpret_cast<HMENU>(IDC_FILE), m_fontTitle);
 
+    // 文件名超长时会被省略（SS_ENDELLIPSIS），用 tooltip 显示完整名。
+    m_hTip = CreateWindowExW(WS_EX_TOPMOST, TOOLTIPS_CLASS, nullptr,
+                             WS_POPUP | TTS_NOPREFIX | TTS_ALWAYSTIP, 0, 0, 0, 0,
+                             hwnd, nullptr, GetModuleHandleW(nullptr), nullptr);
+    if (m_hTip) {
+        TOOLINFOW ti = {};
+        ti.cbSize = sizeof(ti);
+        // TTF_IDISHWND + TTF_SUBCLASS：让 tooltip 自己跟踪该控件，不用手工管矩形。
+        ti.uFlags = TTF_IDISHWND | TTF_SUBCLASS;
+        ti.hwnd = hwnd;
+        ti.uId = reinterpret_cast<UINT_PTR>(m_hFile);
+        ti.lpszText = const_cast<wchar_t*>(L"");
+        SendMessageW(m_hTip, TTM_ADDTOOLW, 0, reinterpret_cast<LPARAM>(&ti));
+        SendMessageW(m_hTip, TTM_SETMAXTIPWIDTH, 0, Scale(400));
+    }
+
     // 第 2 行：状态副标题（小字灰色，与文件名拉开层次）。
     m_hSubtitle = make(L"STATIC", L"未打开文件", SS_LEFT | SS_NOPREFIX, M,
                        Scale(42), contentW, Scale(16),
@@ -420,6 +509,10 @@ void PlayerWindow::CreateControls(HWND hwnd) {
         SendMessageW(m_hProgress, TBM_SETPAGESIZE, 0, 100);
         SendMessageW(m_hProgress, TBM_SETPOS, TRUE, 0);
         EnableWindow(m_hProgress, FALSE);
+        // 子类化：让进度条"点哪跳哪"（见 ProgressSubclassProc）。
+        g_progressOldProc = reinterpret_cast<WNDPROC>(SetWindowLongPtrW(
+            m_hProgress, GWLP_WNDPROC,
+            reinterpret_cast<LONG_PTR>(ProgressSubclassProc)));
     }
 
     // 第 4 行：左「当前时间」右「总时长」，两端对齐。
@@ -463,6 +556,10 @@ void PlayerWindow::CreateControls(HWND hwnd) {
         SendMessageW(m_hVolume, TBM_SETLINESIZE, 0, 5);
         SendMessageW(m_hVolume, TBM_SETPAGESIZE, 0, 10);
         SendMessageW(m_hVolume, TBM_SETPOS, TRUE, 80);
+        // 与进度条一致：点哪跳哪（见 VolumeSubclassProc）。
+        g_volumeOldProc = reinterpret_cast<WNDPROC>(SetWindowLongPtrW(
+            m_hVolume, GWLP_WNDPROC,
+            reinterpret_cast<LONG_PTR>(VolumeSubclassProc)));
     }
     m_hVolumePct = make(L"STATIC", L"80%", SS_RIGHT | SS_NOPREFIX,
                         M + contentW - pctW, Scale(180), pctW, Scale(18),
@@ -478,7 +575,17 @@ void PlayerWindow::ShowTrayMenu(HWND hwnd) {
     GetCursorPos(&pt);
 
     HMENU hMenu = CreatePopupMenu();
-    AppendMenuW(hMenu, MF_STRING, kCmdPlayPause, m_playing ? L"暂停" : L"播放");
+    // 「打开文件…」始终可用：不论是否正在播放、窗口是否隐藏，都能随时挑一个文件。
+    AppendMenuW(hMenu, MF_STRING, kCmdOpenFile, L"打开文件…");
+    AppendMenuW(hMenu, MF_SEPARATOR, 0, nullptr);
+    // 顶部用禁用项显示当前文件名：菜单项为灰显且不可选，键盘导航会自动跳过它。
+    if (!m_fileName.empty()) {
+        AppendMenuW(hMenu, MF_STRING | MF_GRAYED | MF_DISABLED, 0, m_fileName.c_str());
+        AppendMenuW(hMenu, MF_SEPARATOR, 0, nullptr);
+    }
+    // 顺带提示快捷键（\t 之后的内容在菜单里右对齐显示）。
+    AppendMenuW(hMenu, MF_STRING, kCmdPlayPause,
+                m_playing ? L"暂停\t空格" : L"播放\t空格");
     AppendMenuW(hMenu, MF_STRING, kCmdStop, L"停止");
     AppendMenuW(hMenu, MF_STRING, kCmdDestroy, L"销毁");
     // 输出到麦克风：勾选后播放器把声音送到虚拟麦克风，取消则切回原设备继续正常听。
@@ -507,6 +614,9 @@ void PlayerWindow::ShowTrayMenu(HWND hwnd) {
         break;
     case kCmdMicOutput:
         m_app->ToggleMicOutput();
+        break;
+    case kCmdOpenFile:
+        m_app->OpenFileDialog();
         break;
     case kCmdShow:
         m_app->ShowPlayerWindow();
@@ -585,6 +695,11 @@ LRESULT PlayerWindow::HandleMessage(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) {
     }
 
     case WM_TIMER:
+        if (wp == App::kOutputFixTimerId) {
+            KillTimer(hwnd, App::kOutputFixTimerId);
+            m_app->FixupOutputRouting();
+            return 0;
+        }
         if (wp == kTimerId) {
             m_app->OnProgressTick();
         }
@@ -593,8 +708,15 @@ LRESULT PlayerWindow::HandleMessage(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) {
     case WM_APP_TRAY_MSG:
         switch (lp) {
         case WM_LBUTTONUP:
+            // 单击托盘图标：显示/隐藏切换（原来只能显示，隐藏必须去点关闭按钮）。
+            if (IsVisible()) {
+                Hide();
+            } else {
+                m_app->ShowPlayerWindow();
+            }
+            break;
         case WM_LBUTTONDBLCLK:
-            m_app->ShowPlayerWindow();
+            m_app->ShowPlayerWindow(); // 双击确保显示
             break;
         case WM_RBUTTONUP:
             ShowTrayMenu(hwnd);
@@ -612,11 +734,16 @@ LRESULT PlayerWindow::HandleMessage(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) {
 
     case WM_COPYDATA: {
         const COPYDATASTRUCT* pcds = reinterpret_cast<COPYDATASTRUCT*>(lp);
-        if (pcds && pcds->dwData == kSilentPlayerCopyDataMagic && pcds->lpData &&
-            pcds->cbData >= sizeof(wchar_t)) {
-            const std::wstring path(static_cast<const wchar_t*>(pcds->lpData));
-            m_app->LoadFile(path);
-            return TRUE;
+        if (pcds && pcds->lpData && pcds->cbData >= sizeof(wchar_t)) {
+            const std::wstring payload(static_cast<const wchar_t*>(pcds->lpData));
+            if (pcds->dwData == kSilentPlayerCopyDataMagic) {
+                m_app->LoadFile(payload); // 第二实例传来的文件路径
+                return TRUE;
+            }
+            if (pcds->dwData == kSilentPlayerCommandMagic) {
+                m_app->RunCommand(payload); // 第二实例传来的控制命令
+                return TRUE;
+            }
         }
         break;
     }
@@ -628,7 +755,8 @@ LRESULT PlayerWindow::HandleMessage(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) {
         SetBkMode(hdc, TRANSPARENT);
         if (id == IDC_SUBTITLE || id == IDC_TIME || id == IDC_DURATION ||
             id == IDC_VOLUME_PCT) {
-            SetTextColor(hdc, RGB(110, 110, 110));
+            // 用系统灰色而不是硬编码值：高对比度主题下才可读。
+            SetTextColor(hdc, GetSysColor(COLOR_GRAYTEXT));
         } else {
             SetTextColor(hdc, GetSysColor(COLOR_WINDOWTEXT));
         }
@@ -638,6 +766,10 @@ LRESULT PlayerWindow::HandleMessage(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) {
     case WM_CLOSE:
         // 关闭窗口 = 隐藏，继续后台播放、驻留托盘。
         Hide();
+        if (!m_closeHintShown) {
+            m_closeHintShown = true;
+            m_app->NotifyHiddenToTray();
+        }
         return 0;
 
     case WM_DESTROY:

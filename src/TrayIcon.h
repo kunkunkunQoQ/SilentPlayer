@@ -9,6 +9,8 @@ public:
     bool Initialize(HWND hwnd, UINT callbackMsg);
     void Destroy();
     void SetTooltip(const std::wstring& text);
+    // 托盘气泡提示（一次性说明用，例如"关闭窗口后仍在后台播放"）。
+    void ShowBalloon(const std::wstring& title, const std::wstring& text);
 
 private:
     HWND m_hwnd = nullptr;

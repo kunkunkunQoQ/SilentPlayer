@@ -11,6 +11,7 @@ enum : UINT {
     kCmdStop = 2,
     kCmdDestroy = 5, // 与 App::DestroyMedia() 同一个入口
     kCmdMicOutput = 6, // 输出到麦克风（可勾选）
+    kCmdOpenFile = 7,  // 打开文件…（系统文件对话框）
     kCmdShow = 3,
     kCmdExit = 4,
 };
@@ -91,10 +92,13 @@ private:
     void UnregisterFileDrop();
     HWND m_hVolume = nullptr;
     HWND m_hVolumePct = nullptr;
+    HWND m_hTip = nullptr; // 文件名悬停提示（超长省略后可看全名）
     HFONT m_font = nullptr;      // 正文
     HFONT m_fontTitle = nullptr; // 文件名
     HFONT m_fontSmall = nullptr; // 副标题
 
+    std::wstring m_fileName; // 当前文件名（用于托盘菜单顶部与窗口标题）
+    bool m_closeHintShown = false; // 是否已提示过"关闭后仍在后台播放"
     int m_dpi = 96;
     bool m_draggingProgress = false;
     bool m_playing = false;

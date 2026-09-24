@@ -10,6 +10,15 @@ static BOOL CALLBACK EnumChildProc(HWND h, LPARAM) {
     GetClassNameW(h, cls, 256);
     SendMessageW(h, WM_GETTEXT, 2047, reinterpret_cast<LPARAM>(text));
     wprintf(L"    child hwnd=%p class='%ls' text='%ls'\n", h, cls, text);
+    // 同时以 UTF-8 落盘：控制台代码页显示不了中文
+    {
+        FILE* f = nullptr;
+        if (_wfopen_s(&f, L"E:////kunkun////slientPlayer////build////_dlg.txt",
+                      L"a, ccs=UTF-8") == 0 && f) {
+            fwprintf(f, L"child class=%ls text=%ls\n", cls, text);
+            fclose(f);
+        }
+    }
     return TRUE;
 }
 

@@ -90,7 +90,9 @@ bool InvokeTrayItem(HWND mainHwnd, int itemIndex); // 前置声明
 // 触发托盘「麦克风输出提示」并读出弹窗内容，然后关掉它。
 // 这样"检测结果与指引文本"可以被自动化核对，不用靠肉眼看截图。
 void DumpMicHintDialog(HWND mainHwnd) {
-    if (!InvokeTrayItem(mainHwnd, 3)) {
+    // 菜单里的「输出到麦克风」位置（0 起，含分隔符/禁用项，见 --traydump）。
+    // 有文件时：0=打开文件… 1=sep 2=文件名 3=sep 4=播放/暂停 5=停止 6=销毁 7=输出到麦克风 …
+    if (!InvokeTrayItem(mainHwnd, 7)) {
         return;
     }
     HWND dlg = nullptr;
@@ -136,8 +138,7 @@ void DumpMicHintDialog(HWND mainHwnd) {
 
 // 模拟点击托盘菜单里的第 itemIndex 个可选项（0 起，仅计数非分隔项）。
 bool InvokeTrayItem(HWND mainHwnd, int itemIndex) {
-    // 先把光标挪到屏幕偏中间的位置：菜单在光标处弹出，若光标贴着屏幕边缘，
-    // 系统会重新摆放菜单，导致“光标下的条目”不确定、键盘下移次数也就不可预测。
+    // 先把光标挪到屏幕偏中间：菜单在光标处弹出，贴屏幕边缘时会被重新摆放。
     const int sw = GetSystemMetrics(SM_CXSCREEN);
     const int sh = GetSystemMetrics(SM_CYSCREEN);
     SetCursorPos(sw / 3, sh / 3);
@@ -146,25 +147,35 @@ bool InvokeTrayItem(HWND mainHwnd, int itemIndex) {
     PostMessageW(mainHwnd, kTrayCallbackMsg, 0, WM_RBUTTONUP);
     HWND menu = nullptr;
     for (int i = 0; i < 60 && !menu; ++i) {
-        Sleep(20);
+        Sleep(50);
         menu = FindWindowW(L"#32768", nullptr);
     }
     if (!menu) {
-        wprintf(L"tray menu did not open\n");
         return false;
     }
-    Sleep(200);
-    // 菜单刚打开时没有选中项：第一次 VK_DOWN 会落到第 0 项，
-    // 所以要激活第 N 个可选项需要按 N+1 次。
-    for (int i = 0; i <= itemIndex; ++i) {
-        PostMessageW(menu, WM_KEYDOWN, VK_DOWN, 0);
-        PostMessageW(menu, WM_KEYUP, VK_DOWN, 0);
-        Sleep(90);
+    Sleep(150);
+
+    HMENU hMenu = reinterpret_cast<HMENU>(SendMessageW(menu, MN_GETHMENU, 0, 0));
+    if (!hMenu) {
+        PostMessageW(menu, WM_CLOSE, 0, 0);
+        return false;
     }
+    // 按"菜单位置"（0 起，含分隔符与禁用项，见 --traydump）直接点该条目的中心。
+    // 比键盘下移计数确定：不受分隔符/禁用项是否可导航的影响。
+    RECT rc{};
+    if (!GetMenuItemRect(menu, hMenu, itemIndex, &rc)) {
+        wprintf(L"menu position %d not found\n", itemIndex);
+        PostMessageW(menu, WM_CLOSE, 0, 0);
+        return false;
+    }
+    const LPARAM lp =
+        MAKELPARAM((rc.left + rc.right) / 2, (rc.top + rc.bottom) / 2);
+    PostMessageW(menu, WM_MOUSEMOVE, 0, lp);
     Sleep(80);
-    PostMessageW(menu, WM_KEYDOWN, VK_RETURN, 0);
-    PostMessageW(menu, WM_KEYUP, VK_RETURN, 0);
-    Sleep(400);
+    PostMessageW(menu, WM_LBUTTONDOWN, MK_LBUTTON, lp);
+    Sleep(80);
+    PostMessageW(menu, WM_LBUTTONUP, 0, lp);
+    Sleep(450);
     return true;
 }
 
@@ -300,9 +311,19 @@ BOOL CALLBACK DumpChildProc(HWND child, LPARAM param) {
     ctx->items[ctx->count].id = GetDlgCtrlID(child);
     ctx->items[ctx->count].rc = rel;
     ++ctx->count;
+    const std::wstring txt = GetTextOf(child);
+    // 同时以 UTF-8 落盘：控制台代码页显示不了中文，落盘后才能核对控件文本
+    FILE* f = nullptr;
+    if (_wfopen_s(&f, L"E:////kunkun////slientPlayer////build////_controls.txt",
+                  L"a, ccs=UTF-8") == 0 && f) {
+        fwprintf(f, L"  id=%u %s | x=%ld y=%ld w=%ld h=%ld | '%ls'\n",
+                 GetDlgCtrlID(child), cls, rel.left, rel.top,
+                 rel.right - rel.left, rel.bottom - rel.top, txt.c_str());
+        fclose(f);
+    }
     wprintf(L"  id=%-4u %-12s x=%-4ld y=%-4ld w=%-4ld h=%-4ld text='%ls'\n",
             GetDlgCtrlID(child), cls, rel.left, rel.top, rel.right - rel.left,
-            rel.bottom - rel.top, GetTextOf(child).c_str());
+            rel.bottom - rel.top, txt.c_str());
     return TRUE;
 }
 
@@ -352,6 +373,16 @@ int wmain(int argc, wchar_t** argv) {
     bool dumpLayout = false;
     bool dumpTray = false;
     bool dumpMicHint = false;
+    int wheelNotches = 0;
+    std::wstring keyName;
+    int clickProgressPct = -1;
+    int clickVolumePct = -1;
+    int wheelChildNotches = 0;
+    bool openFileDialog = false;
+    bool tooltipCheck = false;
+    bool trayLeft = false;
+    bool hotkeyCheck = false;
+    int hotkeyId = 0;
     if (argc > 1) samples = _wtoi(argv[1]);
     if (argc > 2) intervalMs = static_cast<DWORD>(_wtoi(argv[2]));
     for (int a = 1; a < argc; ++a) {
@@ -361,6 +392,26 @@ int wmain(int argc, wchar_t** argv) {
             dumpTray = true;
         } else if (wcscmp(argv[a], L"--michint") == 0) {
             dumpMicHint = true;
+        } else if (wcsncmp(argv[a], L"--wheel=", 8) == 0) {
+            wheelNotches = _wtoi(argv[a] + 8);
+        } else if (wcsncmp(argv[a], L"--key=", 6) == 0) {
+            keyName = argv[a] + 6;
+        } else if (wcsncmp(argv[a], L"--clickprogress=", 16) == 0) {
+            clickProgressPct = _wtoi(argv[a] + 16);
+        } else if (wcsncmp(argv[a], L"--clickvolume=", 14) == 0) {
+            clickVolumePct = _wtoi(argv[a] + 14);
+        } else if (wcsncmp(argv[a], L"--wheelchild=", 13) == 0) {
+            wheelChildNotches = _wtoi(argv[a] + 13);
+        } else if (wcscmp(argv[a], L"--openfile") == 0) {
+            openFileDialog = true;
+        } else if (wcscmp(argv[a], L"--tooltipcheck") == 0) {
+            tooltipCheck = true;
+        } else if (wcscmp(argv[a], L"--trayleft") == 0) {
+            trayLeft = true;
+        } else if (wcscmp(argv[a], L"--hotkeycheck") == 0) {
+            hotkeyCheck = true;
+        } else if (wcsncmp(argv[a], L"--hotkey=", 9) == 0) {
+            hotkeyId = _wtoi(argv[a] + 9);
         } else if (wcsncmp(argv[a], L"--toggle=", 9) == 0) {
             wchar_t* ctx = nullptr;
             for (wchar_t* tok = wcstok_s(argv[a] + 9, L",", &ctx);
@@ -415,6 +466,164 @@ int wmain(int argc, wchar_t** argv) {
     }
     if (dumpMicHint) {
         DumpMicHintDialog(hwnd);
+        return 0;
+    }
+    if (tooltipCheck) {
+        // 检查本进程是否创建了 tooltip 控件。
+        // 注意：tooltip 是 WS_POPUP（主窗口只是它的属主，不是父窗口），
+        // 所以不能用 FindWindowEx(hwnd,...) 搜子窗口，要按"同进程 + 类名"找。
+        struct Ctx {
+            DWORD pid;
+            HWND found;
+        } ctx{GetWindowThreadProcessId(hwnd, nullptr), nullptr};
+        DWORD pid = 0;
+        GetWindowThreadProcessId(hwnd, &pid);
+        ctx.pid = pid;
+        EnumWindows(
+            [](HWND w, LPARAM lp) -> BOOL {
+                Ctx* c = reinterpret_cast<Ctx*>(lp);
+                DWORD wp = 0;
+                GetWindowThreadProcessId(w, &wp);
+                if (wp == c->pid) {
+                    wchar_t cls[64] = {};
+                    GetClassNameW(w, cls, 64);
+                    if (_wcsicmp(cls, L"tooltips_class32") == 0) {
+                        c->found = w;
+                        return FALSE;
+                    }
+                }
+                return TRUE;
+            },
+            reinterpret_cast<LPARAM>(&ctx));
+        wprintf(L"tooltip window = %ls\n", ctx.found ? L"exists" : L"MISSING");
+        return ctx.found ? 0 : 1;
+    }
+    if (clickVolumePct >= 0) {
+        // 在音量条轨道上按百分比位置点一下（验证"点哪跳哪"）
+        HWND bar = GetDlgItem(hwnd, 1006);
+        if (!bar) {
+            wprintf(L"volume bar not found\n");
+            return 1;
+        }
+        RECT rc{};
+        GetClientRect(bar, &rc);
+        const LPARAM lp = MAKELPARAM(rc.left + (rc.right - rc.left) * clickVolumePct / 100,
+                                     (rc.top + rc.bottom) / 2);
+        PostMessageW(bar, WM_LBUTTONDOWN, MK_LBUTTON, lp);
+        PostMessageW(bar, WM_LBUTTONUP, 0, lp);
+        Sleep(600);
+        wprintf(L"clicked volume at %d%%\n", clickVolumePct);
+        return 0;
+    }
+    if (wheelChildNotches != 0) {
+        // 把滚轮投给"光标下的子控件"（进度条）：验证滚轮是否仍统一调音量、且不改播放位置
+        HWND bar = GetDlgItem(hwnd, 1002);
+        if (!bar) {
+            wprintf(L"progress bar not found\n");
+            return 1;
+        }
+        const int delta = wheelChildNotches > 0 ? 120 : -120;
+        const int n = wheelChildNotches > 0 ? wheelChildNotches : -wheelChildNotches;
+        for (int i = 0; i < n; ++i) {
+            PostMessageW(bar, WM_MOUSEWHEEL, MAKEWPARAM(0, delta), 0);
+            Sleep(150);
+        }
+        Sleep(400);
+        wprintf(L"sent %d wheel notch(es) to progress bar\n", wheelChildNotches);
+        return 0;
+    }
+    if (openFileDialog) {
+        // 触发托盘「打开文件…」（位置 0），看是否弹出系统文件对话框，然后关掉它
+        if (!InvokeTrayItem(hwnd, 0)) {
+            return 1;
+        }
+        HWND dlg = nullptr;
+        for (int i = 0; i < 60 && !dlg; ++i) {
+            Sleep(80);
+            dlg = FindWindowW(nullptr, L"打开音频文件");
+        }
+        wprintf(L"file dialog appeared = %ls\n", dlg ? L"yes" : L"NO");
+        if (dlg) {
+            PostMessageW(dlg, WM_CLOSE, 0, 0);
+            Sleep(300);
+        }
+        return 0;
+    }
+    if (trayLeft) {
+        // 模拟单击托盘图标（托盘回调消息 + WM_LBUTTONUP）
+        PostMessageW(hwnd, kTrayCallbackMsg, 0, WM_LBUTTONUP);
+        Sleep(500);
+        wprintf(L"sent tray left click, visible=%d\n", IsWindowVisible(hwnd) ? 1 : 0);
+        return 0;
+    }
+    if (hotkeyCheck) {
+        // 若本程序已注册该媒体键，别人再注册会失败并返回 ERROR_HOTKEY_ALREADY_REGISTERED。
+        const BOOL ok = RegisterHotKey(nullptr, 0x7F01, MOD_NOREPEAT,
+                                       VK_MEDIA_PLAY_PAUSE);
+        wprintf(L"RegisterHotKey(VK_MEDIA_PLAY_PAUSE) by probe = %d, err=%lu %ls\n", ok,
+                GetLastError(),
+                ok ? L"(说明应用没注册上!)" : L"(说明应用已占用该键)");
+        if (ok) {
+            UnregisterHotKey(nullptr, 0x7F01);
+        }
+        return 0;
+    }
+    if (hotkeyId != 0) {
+        // 直接投递 WM_HOTKEY，验证处理路径（注册是否成功另由 --hotkeycheck 验证）
+        PostMessageW(hwnd, WM_HOTKEY, static_cast<WPARAM>(hotkeyId), 0);
+        Sleep(600);
+        wprintf(L"sent WM_HOTKEY id=%d\n", hotkeyId);
+        return 0;
+    }
+    if (clickProgressPct >= 0) {
+        // 在进度条轨道上按百分比位置点一下，用于验证"点击跳转"是否生效。
+        HWND bar = GetDlgItem(hwnd, 1002);
+        if (!bar) {
+            wprintf(L"progress bar not found\n");
+            return 1;
+        }
+        RECT rc{};
+        GetClientRect(bar, &rc);
+        const int x = rc.left + (rc.right - rc.left) * clickProgressPct / 100;
+        const int y = (rc.top + rc.bottom) / 2;
+        const LPARAM lp = MAKELPARAM(x, y);
+        PostMessageW(bar, WM_LBUTTONDOWN, MK_LBUTTON, lp);
+        PostMessageW(bar, WM_LBUTTONUP, 0, lp);
+        Sleep(700);
+        wprintf(L"clicked progress at %d%%\n", clickProgressPct);
+        return 0;
+    }
+    if (wheelNotches != 0) {
+        // 每个刻度 120；正数 = 滚轮向上（调大音量）
+        const int delta = wheelNotches > 0 ? 120 : -120;
+        for (int i = 0; i < (wheelNotches > 0 ? wheelNotches : -wheelNotches); ++i) {
+            PostMessageW(hwnd, WM_MOUSEWHEEL, MAKEWPARAM(0, delta), 0);
+            Sleep(120);
+        }
+        Sleep(400);
+        wprintf(L"sent %d wheel notch(es)\n", wheelNotches);
+        return 0;
+    }
+    if (!keyName.empty()) {
+        WPARAM vk = 0;
+        if (keyName == L"space") {
+            vk = VK_SPACE;
+        } else if (keyName == L"left") {
+            vk = VK_LEFT;
+        } else if (keyName == L"right") {
+            vk = VK_RIGHT;
+        } else if (keyName == L"esc") {
+            vk = VK_ESCAPE;
+        }
+        if (!vk) {
+            wprintf(L"unknown key '%ls'\n", keyName.c_str());
+            return 1;
+        }
+        // 走窗口消息队列：应用的快捷键是在消息循环里统一拦截的。
+        PostMessageW(hwnd, WM_KEYDOWN, vk, 0);
+        Sleep(600);
+        wprintf(L"sent key '%ls', visible=%d\n", keyName.c_str(),
+                IsWindowVisible(hwnd) ? 1 : 0);
         return 0;
     }
 

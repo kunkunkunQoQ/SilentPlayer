@@ -7,8 +7,8 @@ IDI_APP ICON "app.ico"
 // 任务管理器「进程」页优先使用 FileDescription 作为显示名，缺失时产品/公司信息为空，
 // 只能回退到映像名 —— 因此必须显式声明。
 VS_VERSION_INFO VERSIONINFO
- FILEVERSION    1,0,1,0
- PRODUCTVERSION 1,0,1,0
+ FILEVERSION    1,0,2,0
+ PRODUCTVERSION 1,0,2,0
  FILEFLAGSMASK  VS_FFI_FILEFLAGSMASK
  FILEFLAGS      0
  FILEOS         VOS_NT_WINDOWS32
@@ -20,11 +20,11 @@ BEGIN
         BLOCK "080404B0"
         BEGIN
             VALUE "FileDescription",  "SilentPlayer"
-            VALUE "FileVersion",      "1.0.1.0"
+            VALUE "FileVersion",      "1.0.2.0"
             VALUE "InternalName",     "SilentPlayer"
             VALUE "OriginalFilename", "SilentPlayer.exe"
             VALUE "ProductName",      "SilentPlayer"
-            VALUE "ProductVersion",   "1.0.1.0"
+            VALUE "ProductVersion",   "1.0.2.0"
         END
     END
     BLOCK "VarFileInfo"

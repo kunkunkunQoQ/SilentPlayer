@@ -10,10 +10,19 @@
 - 托盘驻留：左键显示播放器；右键菜单（播放/暂停、停止、销毁、输出到麦克风、显示播放器、退出）
 - 单实例；**停止 ≠ 销毁**；播放结束自动清理，不自动播下一首
 - 格式按**文件内容**识别，不信任扩展名；不转码、不修改原文件
+- 鼠标滚轮在窗口任意位置调音量；空格暂停/继续；←/→ 快退快进 5 秒；Esc 隐藏窗口
+- 进度条与音量条都是"点哪跳哪"
+- 托盘悬停显示当前播放；菜单顶部显示当前文件名
+- 命令行可发控制命令：`--toggle` / `--stop` / `--show` / `--exit` / `--volume=<0-100>`
+- 鼠标滚轮在窗口任意位置调音量；空格暂停/继续；←/→ 快退快进 5 秒；Esc 隐藏窗口
+- 进度条与音量条都是"点哪跳哪"
+- 托盘悬停显示当前播放；菜单顶部显示当前文件名
+- 命令行可发控制命令：`--toggle` / `--stop` / `--show` / `--exit` / `--volume=<0-100>`
 - 不保存播放列表/历史/状态；关闭窗口继续后台播放
 - **单 EXE 双架构**：一个 x64 文件，Windows x64 原生运行，Windows 11 on ARM64 经 x64 模拟层运行
 
-> 麦克风输出提示只做检测与说明，不会把音频写进麦克风，详见 [docs/CAPABILITIES.md](docs/CAPABILITIES.md)。
+> 「输出到麦克风」用**按应用音频路由**把本播放器的输出切到虚拟麦克风设备（只影响本播放器，不改系统默认设备）；
+> 取消勾选立即切回原设备继续正常听歌。详见 [docs/CAPABILITIES.md](docs/CAPABILITIES.md)。
 
 ## 支持格式
 
@@ -35,4 +44,4 @@ SilentPlayer.exe music.mp3    :: 打开即自动播放，驻留托盘
 
 ## 文档
 
-[能力清单](docs/CAPABILITIES.md) · [开发文档](docs/DEVELOPMENT.md) · [架构说明](docs/ARCHITECTURE.md) · [发布规范](docs/RELEASING.md) · [变更记录](docs/CHANGELOG.md)
+[能力清单](docs/CAPABILITIES.md) · [功能计划](docs/ROADMAP.md) · [开发文档](docs/DEVELOPMENT.md) · [架构说明](docs/ARCHITECTURE.md) · [发布规范](docs/RELEASING.md) · [变更记录](docs/CHANGELOG.md) · [v1.0.2 发布说明](docs/RELEASE_v1.0.2.md)
