@@ -1,5 +1,8 @@
 # SilentPlayer
 
+![GitHub 下载量](https://img.shields.io/github/downloads/kunkunkunQoQ/SilentPlayer/total?label=下载量)
+[![支持项目-爱发电](https://img.shields.io/badge/支持项目-爱发电-FF7A2F?logo=afdian&logoColor=white)](https://www.ifdian.net/a/koukou021)
+
 极简、静默、低资源占用的 Windows 音频播放器：**打开音频 → 自动播放 → 隐藏 → 托盘驻留**。
 
 它只做一件事——把音频文件静默地播放出来：平时完全看不到界面，点击系统托盘图标才显示一个极简的播放控制窗口。
