@@ -22,11 +22,11 @@
 
 > 「输出到麦克风」用**按应用音频路由**把本播放器的输出切到虚拟麦克风设备（只影响本播放器，不改系统默认设备）；
 > 支持 **VB-Cable、赛睿 GG（SteelSeries Sonar）**、VoiceMeeter 等常见虚拟麦克风设备；
-> 取消勾选立即切回原设备继续正常听歌。详见 [docs/CAPABILITIES.md](docs/CAPABILITIES.md)。
+> 取消勾选立即切回原设备继续正常听歌。
 
 ## 支持格式
 
-MP3 / WAV / MP4（仅音频轨）/ M4A / AAC / FLAC / WMA 等，全部 Windows Media Foundation 原生解码，**无第三方库**。实测矩阵见 [docs/CHANGELOG.md](docs/CHANGELOG.md)。
+MP3 / WAV / MP4（仅音频轨）/ M4A / AAC / FLAC / WMA 等，全部 Windows Media Foundation 原生解码，**无第三方库**。
 
 ## 使用
 
@@ -38,10 +38,19 @@ SilentPlayer.exe music.mp3    :: 打开即自动播放，驻留托盘
 
 ## 下载
 
-[Releases](https://github.com/kunkunkunQoQ/SilentPlayer/releases) 中的 `SilentPlayer.exe`（单个可执行文件，约 270 KB，复制即用）。
+[Releases](https://github.com/kunkunkunQoQ/SilentPlayer/releases) 中的 `SilentPlayer.exe`（单个可执行文件，约 309 KB，复制即用）。
 
 **系统要求**：Windows x64（Windows 11 on ARM64 可用）；无需安装 .NET / 运行库 / 任何第三方依赖。
 
-## 文档
+## 构建
 
-[能力清单](docs/CAPABILITIES.md) · [功能计划](docs/ROADMAP.md) · [开发文档](docs/DEVELOPMENT.md) · [架构说明](docs/ARCHITECTURE.md) · [发布规范](docs/RELEASING.md) · [变更记录](docs/CHANGELOG.md) · [v1.0.2 发布说明](docs/RELEASE_v1.0.2.md)
+需要 Visual Studio 2022（MSVC v143）+ Windows SDK 10.0.22621 + CMake 3.20+。
+
+```bash
+source tools/buildenv.sh                              # 固化好的 MSVC x64 + SDK 环境
+"$CMAKE" -S . -B build -G "NMake Makefiles" -DCMAKE_BUILD_TYPE=Release   # 首次配置
+"$CMAKE" --build build                                # 产出 build/SilentPlayer.exe
+```
+
+技术栈：C++17 / Win32 / Windows Media Foundation，静态 CRT（`/MT`），**零第三方库**。
+发布产物必须是 **x64**（同时覆盖 x64 原生与 Windows 11 on ARM64 的 x64 模拟层）。

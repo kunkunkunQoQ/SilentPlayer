@@ -8,9 +8,8 @@
 /.vscode/
 *.user
 
-# ---- Test probe binaries (built from test/*.cpp) ----
-/test/*.exe
-/test/*.obj
-
-# ---- Downloaded test samples (reproducible via test/fetch_samples.py) ----
-/test/samples/
+# ---- 本地文档与诊断探针（仅保留在本地，不入库）----
+# 仓库只发布代码 + README。docs/ 与 test/ 有意不跟踪：
+# 需要时用 `git add -f docs/xxx.md` 强制加回。
+/docs/
+/test/
