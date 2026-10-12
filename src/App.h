@@ -42,6 +42,17 @@ public:
     bool MicOutputEnabled() const { return m_micOutputEnabled; }
     // 打开"选择音频文件"对话框（托盘菜单「打开文件…」）。
     void OpenFileDialog();
+    // 「N 秒无操作自动退出」开关（托盘菜单可勾选）：
+    //   开启 → 启动 1 秒心跳定时器；只要「当前没有正在播放」的状态累计达到
+    //          kAutoExitIdleSeconds 秒，就按正常退出路径结束进程（与托盘「退出」一致）。
+    //   关闭 → 停掉定时器并清零计数，功能**完全不运行**（默认关闭）。
+    void ToggleAutoExit();
+    bool AutoExitEnabled() const { return m_autoExitEnabled; }
+    // 心跳（每 1 秒一次）。仅在本功能开启时才会被调用。
+    void OnAutoExitTick();
+    // 自动退出心跳定时器 id；空闲判定阈值（秒）。
+    static constexpr UINT_PTR kAutoExitTimerId = 3;
+    static constexpr int kAutoExitIdleSeconds = 360;
     // 启动后修正输出路由：清除"按应用路由"设置并重载，确保默认走系统默认设备。
     void FixupOutputRouting();
     // 启动修正用的定时器 id。
@@ -88,6 +99,10 @@ private:
     bool m_micOutputEnabled = false;
     // 进麦克风的输出端点（开启时记录，供界面显示）。
     std::wstring m_micFeedEndpointName;
+    // 「N 秒无操作自动退出」是否已开启（仅本次运行有效，不写盘；默认关闭）。
+    bool m_autoExitEnabled = false;
+    // 当前这段"没有正在播放"的起始时刻（GetTickCount64）；0 = 未在计时。
+    ULONGLONG m_autoExitIdleSince = 0;
     // 重新加载当前媒体，让"按应用音频路由"的新设置生效，并保持播放位置与播放状态。
     // （换输出设备必然要重建音频会话，所以必须重载一次。）
     void ReloadMedia();

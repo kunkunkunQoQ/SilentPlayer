@@ -333,6 +333,48 @@ void App::ToggleMicOutput() {
                 MB_OK | MB_ICONINFORMATION);
 }
 
+// 「360 秒无操作自动退出」开关（托盘菜单可勾选）。
+//   开启：启动 1 秒心跳定时器，累计"没有正在播放"的时长，达到阈值就正常退出进程。
+//   关闭：停掉定时器并把计数清零 —— 功能完全不运行（默认关闭，不写盘）。
+// 判定口径：只看"当前是否正在播放"。暂停 / 停止 / 播放结束回到空闲 / 未打开文件
+// 都算"无操作"，累计 360 秒后退出。正在播放时计时立即清零。
+void App::ToggleAutoExit() {
+    if (m_autoExitEnabled) {
+        KillTimer(m_window.Handle(), kAutoExitTimerId);
+        m_autoExitEnabled = false;
+        m_autoExitIdleSince = 0;
+        return;
+    }
+    m_autoExitEnabled = true;
+    m_autoExitIdleSince = 0; // 从下一次心跳开始重新计时
+    SetTimer(m_window.Handle(), kAutoExitTimerId, 1000, nullptr);
+}
+
+// 自动退出心跳（每 1 秒）。只有功能开启时定时器才存在，因此这里也再确认一次。
+void App::OnAutoExitTick() {
+    if (!m_autoExitEnabled || m_exiting) {
+        return;
+    }
+
+    // 用播放意图 + 实际状态共同判定，避免重载瞬间的 Stopped 被误当成"在播"。
+    const bool playing =
+        m_player.WantPlaying() && m_player.State() == PlayState::Playing;
+    if (playing) {
+        m_autoExitIdleSince = 0; // 正在播放：清零，重新等下一次空闲
+        return;
+    }
+
+    const ULONGLONG now = GetTickCount64();
+    if (m_autoExitIdleSince == 0) {
+        m_autoExitIdleSince = now; // 刚进入空闲：开始计时
+        return;
+    }
+    if (now - m_autoExitIdleSince >=
+        static_cast<ULONGLONG>(kAutoExitIdleSeconds) * 1000ULL) {
+        ExitApp(); // 与托盘「退出」走同一条正常退出路径
+    }
+}
+
 void App::ExitApp() {
     if (m_exiting) {
         return;

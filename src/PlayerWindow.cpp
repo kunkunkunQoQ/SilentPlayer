@@ -591,6 +591,9 @@ void PlayerWindow::ShowTrayMenu(HWND hwnd) {
     // 输出到麦克风：勾选后播放器把声音送到虚拟麦克风，取消则切回原设备继续正常听。
     AppendMenuW(hMenu, MF_STRING | (m_app->MicOutputEnabled() ? MF_CHECKED : 0),
                 kCmdMicOutput, L"输出到麦克风");
+    // 无操作自动退出：勾选后，只要累计 360 秒没有在播放就自动结束进程（默认不勾 = 不运行）。
+    AppendMenuW(hMenu, MF_STRING | (m_app->AutoExitEnabled() ? MF_CHECKED : 0),
+                kCmdAutoExit, L"360 秒无播放自动退出");
     AppendMenuW(hMenu, MF_SEPARATOR, 0, nullptr);
     AppendMenuW(hMenu, MF_STRING, kCmdShow, L"显示播放器");
     AppendMenuW(hMenu, MF_SEPARATOR, 0, nullptr);
@@ -614,6 +617,9 @@ void PlayerWindow::ShowTrayMenu(HWND hwnd) {
         break;
     case kCmdMicOutput:
         m_app->ToggleMicOutput();
+        break;
+    case kCmdAutoExit:
+        m_app->ToggleAutoExit();
         break;
     case kCmdOpenFile:
         m_app->OpenFileDialog();
@@ -698,6 +704,10 @@ LRESULT PlayerWindow::HandleMessage(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) {
         if (wp == App::kOutputFixTimerId) {
             KillTimer(hwnd, App::kOutputFixTimerId);
             m_app->FixupOutputRouting();
+            return 0;
+        }
+        if (wp == App::kAutoExitTimerId) {
+            m_app->OnAutoExitTick();
             return 0;
         }
         if (wp == kTimerId) {
