@@ -591,6 +591,11 @@ void PlayerWindow::ShowTrayMenu(HWND hwnd) {
     // 输出到麦克风：勾选后播放器把声音送到虚拟麦克风，取消则切回原设备继续正常听。
     AppendMenuW(hMenu, MF_STRING | (m_app->MicOutputEnabled() ? MF_CHECKED : 0),
                 kCmdMicOutput, L"输出到麦克风");
+    // 麦克风 + 播放设备同时输出：你自己也听得到，朋友也听得到。
+    // 与上面那项**互斥**（开一个自动关另一个）。
+    AppendMenuW(hMenu,
+                MF_STRING | (m_app->MicAndSpeakersEnabled() ? MF_CHECKED : 0),
+                kCmdMicAndSpeakers, L"麦克风 + 播放设备同时输出");
     // 无操作自动退出：勾选后，只要累计 360 秒没有在播放就自动结束进程（默认不勾 = 不运行）。
     AppendMenuW(hMenu, MF_STRING | (m_app->AutoExitEnabled() ? MF_CHECKED : 0),
                 kCmdAutoExit, L"360 秒无播放自动退出");
@@ -617,6 +622,9 @@ void PlayerWindow::ShowTrayMenu(HWND hwnd) {
         break;
     case kCmdMicOutput:
         m_app->ToggleMicOutput();
+        break;
+    case kCmdMicAndSpeakers:
+        m_app->ToggleMicAndSpeakers();
         break;
     case kCmdAutoExit:
         m_app->ToggleAutoExit();

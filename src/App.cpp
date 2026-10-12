@@ -108,6 +108,12 @@ int App::Run(HINSTANCE hInstance, const std::wstring& initialFile,
         SetTimer(m_window.Handle(), kOutputFixTimerId, 900, nullptr);
     }
 
+    // 「N 秒无操作自动退出」默认开启：启动即开始 1 秒心跳计时。
+    // （取消勾选会 KillTimer 并清零，之后完全不再运行。）
+    if (m_autoExitEnabled) {
+        SetTimer(m_window.Handle(), kAutoExitTimerId, 1000, nullptr);
+    }
+
     // 消息循环。
     // 键盘快捷键在这里统一拦截：无论焦点在窗口还是某个子控件上都生效
     // （本程序没有文本输入，不存在与输入冲突的问题）。
@@ -132,6 +138,7 @@ int App::Run(HINSTANCE hInstance, const std::wstring& initialFile,
     m_tray.Destroy();
     m_window.Destroy();
     m_player.Shutdown();
+    m_micPlayer.Shutdown(); // 第二路（没启用过也安全：Shutdown 是幂等的）
     if (comHr == S_OK) {
         OleUninitialize();
     }
@@ -171,6 +178,10 @@ void App::LoadFile(const std::wstring& path) {
     // 自动播放，最终状态以 Started 事件为准。
     m_window.SetPlayState(true);
     m_window.RefreshPlayback(0.0, 0.0, m_player.Duration());
+    // 第二路同步打开同一文件（换歌时必须跟上，否则麦克风里还是上一首）。
+    if (m_micMode == MicMode::MicAndSpeakers) {
+        SyncSecondOutput();
+    }
 }
 
 void App::TogglePlayPause() {
@@ -182,6 +193,7 @@ void App::TogglePlayPause() {
     } else {
         m_player.Play();
     }
+    MirrorToSecondOutput();
 }
 
 void App::Stop() {
@@ -189,6 +201,7 @@ void App::Stop() {
         return;
     }
     m_player.Stop();
+    MirrorToSecondOutput();
 }
 
 // 销毁当前媒体：停止 → 释放 Media Foundation 媒体 → 回到“未打开文件”的空闲状态。
@@ -200,6 +213,10 @@ void App::DestroyMedia() {
     // CloseMedia：StopSessionSync → 释放 source/拓扑/音量服务 → 重建会话 → 递增媒体代号。
     // 代号递增后，旧媒体的迟到事件（Started/Paused/Stopped/Ended/Error）都会被丢弃。
     m_player.CloseMedia();
+    // 第二路也要一起释放，否则它会继续播放/占着虚拟麦克风。
+    if (m_micMode == MicMode::MicAndSpeakers) {
+        m_micPlayer.CloseMedia();
+    }
     ResetToIdle();
 }
 
@@ -285,52 +302,182 @@ void App::ReloadMedia() {
     if (!wasPlaying) {
         m_player.Pause();
     }
+    // 主路被重开了一次，第二路也要重新对齐（否则两边会错位/停在旧会话上）。
+    SyncSecondOutput();
 }
 
-// 「输出到麦克风」开关。
-//   开启：把播放器输出切到虚拟麦克风设备——实测只有渲染到该虚拟设备的"渲染侧"，
-//         声音才会出现在它的麦克风里（渲染到 Gaming/Media/Aux/Chat 都不会）。
+// 「输出到麦克风」开关（**仅麦克风**：你自己听不到，朋友能听到）。
+//   开启：把本应用的输出设备切到虚拟麦克风设备——实测只有渲染到该虚拟设备的
+//         "渲染侧"，声音才会出现在它的麦克风里（渲染到 Gaming/Media/Aux/Chat 都不会）。
 //   关闭：切回系统默认播放设备，恢复正常听歌。
+// 与「麦克风 + 播放设备同时输出」互斥：开这个会先关掉那个。
 void App::ToggleMicOutput() {
-    if (m_micOutputEnabled) {
-        // 取消勾选：清除"本应用"的输出设备设置 → 回到系统默认设备，继续正常听歌。
+    // 已经是"仅麦克风"→ 取消勾选，回到默认。
+    if (m_micMode == MicMode::MicOnly) {
+        SwitchToMicMode(MicMode::Default);
+        return;
+    }
+    // 无论当前是默认还是"麦克风+播放设备"，都切到"仅麦克风"（自动关掉另一个）。
+    SwitchToMicMode(MicMode::MicOnly);
+}
+// 统一的输出模式切换入口：三种状态互斥，且**先彻底停掉旧模式**再启用新模式。
+// 把互斥逻辑集中在这里，避免两个开关各写一份而逐渐不一致。
+bool App::SwitchToMicMode(MicMode mode, bool quiet) {
+    if (m_micMode == mode) {
+        return true;
+    }
+
+    // 1) 停掉旧模式的一切痕迹。
+    //    - 第二路解码会话：任何模式下只要还开着就先关掉。
+    if (m_micMode == MicMode::MicAndSpeakers) {
+        m_micPlayer.CloseMedia();
+    }
+    //    - 仅麦克风模式留下的"按应用路由"设置：切走时必须清掉，
+    //      否则它会继续把本进程的输出钉在麦克风上。
+    if (m_micMode == MicMode::MicOnly) {
         PerAppAudio::ClearProcessOutputDevice(GetCurrentProcessId());
-        ReloadMedia();
-        m_micOutputEnabled = false;
         m_micFeedEndpointName.clear();
-        SetStatusText(m_statusBase); // 去掉副标题里的模式后缀
-        return;
     }
 
-    const std::wstring mic = AudioDevices::RecommendedMicName();
-    std::wstring id;
-    std::wstring name;
-    if (!AudioDevices::FindMicFeedEndpoint(mic, &id, &name)) {
-        MessageBoxW(m_window.Handle(),
-                    L"没有找到可用的虚拟麦克风，无法把声音送到麦克风。\n\n"
-                    L"需要先安装一个虚拟音频设备（如 VB-Cable / VoiceMeeter）。",
-                    L"SilentPlayer · 输出到麦克风", MB_OK | MB_ICONWARNING);
-        return;
+    m_micMode = mode;
+
+    // 2) 启用新模式。
+    if (mode == MicMode::MicOnly) {
+        const std::wstring mic = AudioDevices::RecommendedMicName();
+        std::wstring id;
+        std::wstring name;
+        if (!AudioDevices::FindMicFeedEndpoint(mic, &id, &name)) {
+            m_micMode = MicMode::Default;
+            if (!quiet) {
+                MessageBoxW(m_window.Handle(),
+                            L"没有找到可用的虚拟麦克风，无法把声音送到麦克风。\n\n"
+                            L"需要先安装一个虚拟音频设备（如 VB-Cable / VoiceMeeter）。",
+                            L"SilentPlayer · 输出到麦克风", MB_OK | MB_ICONWARNING);
+            }
+            return false;
+        }
+        // 用"按应用音频路由"把本进程（主路）的输出改到虚拟麦克风设备。
+        // （SteelSeries Sonar 之类的软件用的也是这套机制。）
+        if (!PerAppAudio::SetProcessOutputDevice(GetCurrentProcessId(), id)) {
+            m_micMode = MicMode::Default;
+            if (!quiet) {
+                MessageBoxW(m_window.Handle(),
+                            L"无法设置本应用的输出设备（当前系统可能不支持该接口）。\n\n"
+                            L"可以改为手动把 Windows 默认播放设备切换成虚拟麦克风设备。",
+                            L"SilentPlayer · 输出到麦克风", MB_OK | MB_ICONWARNING);
+            }
+            return false;
+        }
+        m_micFeedEndpointName = name;
+        ReloadMedia(); // 让新的路由设置生效（重建音频会话）
+        SetStatusText(m_statusBase); // 副标题加上模式后缀，避免用户以为"没声音了"
+
+        if (!quiet) {
+            const std::wstring advice = AudioDevices::BuildMicRoutingAdvice(name);
+            MessageBoxW(m_window.Handle(), advice.c_str(),
+                        L"SilentPlayer · 输出到麦克风", MB_OK | MB_ICONINFORMATION);
+        }
+        return true;
     }
 
-    // 用"按应用音频路由"把本进程的输出改到虚拟麦克风设备：
-    // 只影响本播放器，不动系统默认设备，也不影响其它应用。
-    // （SteelSeries Sonar 之类的软件用的也是这套机制，所以这能覆盖它对我们的设置。）
-    if (!PerAppAudio::SetProcessOutputDevice(GetCurrentProcessId(), id)) {
-        MessageBoxW(m_window.Handle(),
-                    L"无法设置本应用的输出设备（当前系统可能不支持该接口）。\n\n"
-                    L"可以改为手动把 Windows 默认播放设备切换成虚拟麦克风设备。",
-                    L"SilentPlayer · 输出到麦克风", MB_OK | MB_ICONWARNING);
+    if (mode == MicMode::MicAndSpeakers) {
+        // 主路**不动**：仍然是"本应用默认端点"→ 走系统默认播放设备，你自己能听到。
+        // 第二路显式钉到虚拟麦克风的渲染侧 → 朋友能听到。
+        const std::wstring mic = AudioDevices::RecommendedMicName();
+        std::wstring id;
+        std::wstring name;
+        if (!AudioDevices::FindMicFeedEndpoint(mic, &id, &name)) {
+            m_micMode = MicMode::Default;
+            if (!quiet) {
+                MessageBoxW(m_window.Handle(),
+                            L"没有找到可用的虚拟麦克风，无法把声音同时送到麦克风。\n\n"
+                            L"需要先安装一个虚拟音频设备（如 VB-Cable / VoiceMeeter）。",
+                            L"SilentPlayer · 麦克风 + 播放设备", MB_OK | MB_ICONWARNING);
+            }
+            return false;
+        }
+        if (FAILED(m_micPlayer.Initialize())) {
+            m_micMode = MicMode::Default;
+            if (!quiet) {
+                MessageBoxW(m_window.Handle(), L"初始化第二路音频输出失败。",
+                            L"SilentPlayer · 麦克风 + 播放设备", MB_OK | MB_ICONERROR);
+            }
+            return false;
+        }
+        // 钉死到虚拟麦克风的渲染侧；主路不受影响，继续走默认播放设备。
+        m_micPlayer.SetOutputEndpointId(id);
+        m_micFeedEndpointName = name;
+
+        // 主路保持默认设备（若之前是"仅麦克风"，上面已清掉路由设置）。
+        ReloadMedia(); // 主路按默认端点重开
+        // 第二路跟上：打开同一文件、同一位置、同一音量。
+        SyncSecondOutput();
+        SetStatusText(m_statusBase);
+
+        if (!quiet) {
+            const std::wstring advice = AudioDevices::BuildMicRoutingAdvice(name) +
+                L"\n\n你现在**自己也听得到**（本模式与「输出到麦克风」不同），"
+                L"朋友同样能听到。";
+            MessageBoxW(m_window.Handle(), advice.c_str(),
+                        L"SilentPlayer · 麦克风 + 播放设备", MB_OK | MB_ICONINFORMATION);
+        }
+        return true;
+    }
+
+    // MicMode::Default：清掉路由设置并重载，回到"正常听歌"。
+    PerAppAudio::ClearProcessOutputDevice(GetCurrentProcessId());
+    m_micFeedEndpointName.clear();
+    ReloadMedia();
+    SetStatusText(m_statusBase);
+    return true;
+}
+
+// 主路的播放控制之后，把同样的动作同步给第二路。
+// 两路是**独立解码的两个 MF 会话**，不会有系统级的自动同步，所以每一个控制点都要镜像一次。
+// 不在该模式时直接返回，零开销。
+void App::MirrorToSecondOutput() {
+    if (m_micMode != MicMode::MicAndSpeakers) {
         return;
     }
-    ReloadMedia(); // 让新的路由设置生效（重建音频会话）
-    m_micOutputEnabled = true;
-    m_micFeedEndpointName = name;
-    SetStatusText(m_statusBase); // 副标题加上模式后缀，避免用户以为"没声音了"
+    // 用"播放意图"而不是事件驱动的 State()：刚 Play/Pause 时事件还没到，
+    // State() 会是上一态，镜像就会慢一拍甚至反向（本项目已知坑，见 AI_CONTEXT #14）。
+    if (m_player.WantPlaying()) {
+        m_micPlayer.Play();
+    } else {
+        m_micPlayer.Pause();
+    }
+}
 
-    const std::wstring advice = AudioDevices::BuildMicRoutingAdvice(name);
-    MessageBoxW(m_window.Handle(), advice.c_str(), L"SilentPlayer · 输出到麦克风",
-                MB_OK | MB_ICONINFORMATION);
+// 让第二路（进麦克风那一路）跟上主路的媒体、位置与音量。
+// 主路是"用户听的那一路"，位置/播放状态都以它为准。
+void App::SyncSecondOutput() {
+    if (m_micMode != MicMode::MicAndSpeakers || !m_hasFile ||
+        m_currentFile.empty()) {
+        return;
+    }
+    if (FAILED(m_micPlayer.OpenFile(m_currentFile))) {
+        return; // 第二路开不起来不影响主路：用户至少还能听到
+    }
+    // 音量与位置跟随主路（换设备后必然要重新设一次）。
+    m_micPlayer.SetVolume(m_player.GetVolume());
+    const double pos = m_player.Position();
+    const double dur = m_player.Duration();
+    if (pos > 0.0 && dur > 0.0) {
+        m_micPlayer.SeekToFraction(pos / dur);
+    }
+    if (!m_player.WantPlaying()) {
+        m_micPlayer.Pause();
+    }
+}
+
+// 「麦克风 + 播放设备同时输出」开关（你自己听得到，朋友也听得到）。
+// 与「输出到麦克风」互斥：开这个会自动关掉那个，反之亦然。
+void App::ToggleMicAndSpeakers() {
+    if (m_micMode == MicMode::MicAndSpeakers) {
+        SwitchToMicMode(MicMode::Default);
+        return;
+    }
+    SwitchToMicMode(MicMode::MicAndSpeakers);
 }
 
 // 「360 秒无操作自动退出」开关（托盘菜单可勾选）。
@@ -381,7 +528,11 @@ void App::ExitApp() {
     }
     m_exiting = true;
     // 清掉"按应用音频路由"设置：开着「输出到麦克风」退出时不在系统里留下持久化设置。
+    // （"麦克风 + 播放设备"模式用的是显式端点 + NOPERSIST，不写系统设置，无需清理。）
     PerAppAudio::ClearProcessOutputDevice(GetCurrentProcessId());
+    if (m_micMode == MicMode::MicAndSpeakers) {
+        m_micPlayer.CloseMedia(); // 先停第二路，别让它在退出过程中还出声
+    }
     m_tray.Destroy();
     m_window.Hide();
     DestroyWindow(m_window.Handle()); // WM_DESTROY → PostQuitMessage
@@ -392,6 +543,9 @@ void App::SeekToFraction(double fraction) {
         return;
     }
     m_player.SeekToFraction(fraction);
+    if (m_micMode == MicMode::MicAndSpeakers) {
+        m_micPlayer.SeekToFraction(fraction); // 两路一起跳，避免错位
+    }
 }
 
 void App::SetVolume(float volume) {
@@ -400,6 +554,9 @@ void App::SetVolume(float volume) {
     }
     m_player.SetVolume(volume);
     m_window.SetVolumeUI(volume);
+    if (m_micMode == MicMode::MicAndSpeakers) {
+        m_micPlayer.SetVolume(volume); // 音量也同步（否则两路响度不一致）
+    }
 }
 
 void App::OnProgressTick() {
@@ -408,13 +565,17 @@ void App::OnProgressTick() {
     }
 }
 
-// 状态文本统一入口：副标题带"输出到麦克风"模式后缀，托盘提示带文件名与状态。
+// 状态文本统一入口：副标题带输出模式后缀，托盘提示带文件名与状态。
 void App::SetStatusText(const std::wstring& base) {
     m_statusBase = base;
     std::wstring subtitle = base;
     // 只有真正在播放某个文件时才加模式后缀：空闲时"未打开文件 · 输出到麦克风"读起来别扭。
-    if (m_micOutputEnabled && m_hasFile) {
-        subtitle += L" · 输出到麦克风";
+    if (m_hasFile) {
+        if (m_micMode == MicMode::MicOnly) {
+            subtitle += L" · 输出到麦克风";
+        } else if (m_micMode == MicMode::MicAndSpeakers) {
+            subtitle += L" · 麦克风 + 播放设备";
+        }
     }
     m_window.SetStatus(subtitle);
 
@@ -469,6 +630,9 @@ bool App::HandleShortcut(WPARAM vk) {
 }
 
 // 命令行 / IPC 控制命令。便于脚本、快捷键工具、Stream Deck 等外部触发。
+// 注意：`micmode=` 是**仅用于诊断/自动化**的入口 —— 输出模式原本只有托盘菜单能切，
+// 而菜单自动化必须注入鼠标（探针的 --trayitem 会 SetCursorPos + 合成点击），
+// 会抢占用户鼠标。有了这条命令，所有输出模式的验证都不需要碰鼠标。
 void App::RunCommand(const std::wstring& command) {
     if (command == L"toggle") {
         TogglePlayPause();
@@ -478,6 +642,17 @@ void App::RunCommand(const std::wstring& command) {
         ShowPlayerWindow();
     } else if (command == L"exit") {
         ExitApp();
+    } else if (command.rfind(L"micmode=", 0) == 0) {
+        // off = 默认（不送麦克风）/ mic = 仅麦克风 / dual = 麦克风 + 播放设备
+        const std::wstring v = command.substr(8);
+        if (v == L"off") {
+            SwitchToMicMode(MicMode::Default, /*quiet=*/true);
+        } else if (v == L"mic") {
+            SwitchToMicMode(MicMode::MicOnly, /*quiet=*/true);
+        } else if (v == L"dual") {
+            SwitchToMicMode(MicMode::MicAndSpeakers, /*quiet=*/true);
+        }
+        // 非法值忽略（与 volume= 的处理一致，不静默改状态）
     } else if (command.rfind(L"volume=", 0) == 0) {
         // 非法值（如 --volume=abc）忽略，而不是被 _wtoi 当成 0 静音。
         wchar_t* end = nullptr;

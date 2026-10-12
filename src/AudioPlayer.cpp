@@ -145,6 +145,10 @@ HRESULT AudioPlayer::Initialize() {
     if (FAILED(hr)) {
         return hr;
     }
+    // 记下"本实例确实调用过 MFStartup"：MFStartup/MFShutdown 是进程级引用计数，
+    // 必须一一配对。没有这个标记，未 Initialize 就 Shutdown 会导致引用计数失衡，
+    // 实测表现为进程退出时 STATUS_HEAP_CORRUPTION (0xC0000374)。
+    m_mfStarted = true;
     m_stopEvent = CreateEventW(nullptr, FALSE, FALSE, nullptr);
     hr = CreateSession();
     if (FAILED(hr)) {
@@ -152,6 +156,7 @@ HRESULT AudioPlayer::Initialize() {
             CloseHandle(m_stopEvent);
             m_stopEvent = nullptr;
         }
+        m_mfStarted = false;
         MFShutdown();
         return hr;
     }
@@ -170,12 +175,21 @@ void AudioPlayer::Shutdown() {
         CloseHandle(m_stopEvent);
         m_stopEvent = nullptr;
     }
-    MFShutdown();
+    // 只有本实例真的 MFStartup 过才 MFShutdown，保证引用计数配平。
+    // （例如「麦克风 + 播放设备」的第二路可能从未 Initialize 就被 Shutdown。）
+    if (m_mfStarted) {
+        m_mfStarted = false;
+        MFShutdown();
+    }
 }
 
 void AudioPlayer::SetEventSink(HWND hwnd, UINT msg) {
     m_sinkHwnd = hwnd;
     m_sinkMsg = msg;
+}
+
+void AudioPlayer::SetOutputEndpointId(const std::wstring& deviceId) {
+    m_outputEndpointId = deviceId;
 }
 
 // --- 播放控制 ------------------------------------------------------------
@@ -580,9 +594,22 @@ HRESULT AudioPlayer::BuildTopology(IMFMediaSource* pSource,
     if (FAILED(hr)) {
         return hr;
     }
-    // 说明：输出设备由"按应用音频路由"决定（见 src/PerAppAudio），这里不指定端点，
-    // 让渲染器跟随本应用的默认端点。实测用 MF 显式指定端点会被虚拟声卡软件的
-    // 应用路由覆盖，所以不用那条路。
+    // 两种输出方式：
+    //   1) m_outputEndpointId 为空（默认，单路）：输出设备由"按应用音频路由"决定
+    //      （见 src/PerAppAudio），这里不指定端点，让渲染器跟随本应用的默认端点。
+    //   2) m_outputEndpointId 非空（「麦克风 + 播放设备同时输出」的第二路）：
+    //      用 MF_AUDIO_RENDERER_ATTRIBUTE_ENDPOINT_ID 把这一路钉死在指定端点上，
+    //      不受按应用路由影响，从而与主路同时出声。
+    if (!m_outputEndpointId.empty()) {
+        hr = pRendererActivate->SetString(MF_AUDIO_RENDERER_ATTRIBUTE_ENDPOINT_ID,
+                                          m_outputEndpointId.c_str());
+        if (FAILED(hr)) {
+            return hr;
+        }
+        // 不把这个选择持久化到系统（只影响本次渲染）。
+        pRendererActivate->SetUINT32(MF_AUDIO_RENDERER_ATTRIBUTE_FLAGS,
+                                     MF_AUDIO_RENDERER_ATTRIBUTE_FLAGS_NOPERSIST);
+    }
 
     ComPtr<IMFTopologyNode> pOutputNode;
     hr = MFCreateTopologyNode(MF_TOPOLOGY_OUTPUT_NODE, &pOutputNode);

@@ -14,7 +14,8 @@ enum : UINT {
     kCmdOpenFile = 7,  // 打开文件…（系统文件对话框）
     kCmdShow = 3,
     kCmdExit = 4,
-    kCmdAutoExit = 8,  // 360 秒无操作自动退出（可勾选；默认关闭）
+    kCmdAutoExit = 8,  // 360 秒无操作自动退出（可勾选；默认开启）
+    kCmdMicAndSpeakers = 9, // 麦克风 + 播放设备同时输出（可勾选；与「输出到麦克风」互斥）
 };
 
 // 播放器主窗口：同时也是隐藏的“常驻后台窗口”。

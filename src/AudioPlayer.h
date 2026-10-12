@@ -74,6 +74,13 @@ public:
     // 事件将通过 PostMessage(msg) 发送到 hwnd，wParam = (WPARAM)AudioEvent。
     void SetEventSink(HWND hwnd, UINT msg);
 
+    // 把本实例的渲染器显式绑到一个输出端点（MMDevice 设备 ID）。
+    // 空字符串 = 跟随"本应用的默认端点"（用于「输出到麦克风」那条按应用路由）。
+    // 非空 = 用 MF_AUDIO_RENDERER_ATTRIBUTE_ENDPOINT_ID 钉死该端点，
+    //        供「麦克风 + 播放设备同时输出」的第二路使用。
+    // 注意：只在 BuildTopology 时生效，改完需要重新 OpenFile/ReloadMedia。
+    void SetOutputEndpointId(const std::wstring& deviceId);
+
     // IUnknown
     STDMETHODIMP QueryInterface(REFIID riid, void** ppv) override;
     STDMETHODIMP_(ULONG) AddRef() override;
@@ -119,6 +126,8 @@ private:
     HANDLE m_stopEvent = nullptr;
 
     std::wstring m_path;
+    // 显式绑定的输出端点（空 = 跟随本应用默认端点）。见 SetOutputEndpointId。
+    std::wstring m_outputEndpointId;
     double m_durationSec = 0.0;
     float m_volume = 0.8f; // 默认音量 80%（仅内存，不持久化）
     PlayState m_state = PlayState::Stopped;
@@ -126,6 +135,8 @@ private:
     bool m_loading = false; // OpenFile 进行中，忽略旧会话的中间事件
     bool m_wantPlaying = false; // 播放意图（见 WantPlaying()）
     bool m_shutdown = false;
+    // 本实例是否成功调用过 MFStartup（决定 Shutdown 时是否要配对 MFShutdown）。
+    bool m_mfStarted = false;
 
     // 播放位置基准：Position() = 会话时钟 - m_clockBase。
     // 新呈现开始时（MESessionStarted）重新记录，保证换歌后进度从 0 开始。
