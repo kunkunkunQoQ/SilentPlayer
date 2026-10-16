@@ -58,3 +58,24 @@ source tools/buildenv.sh                              # 固化好的 MSVC x64 + 
 
 技术栈：C++17 / Win32 / Windows Media Foundation，静态 CRT（`/MT`），**零第三方库**。
 发布产物必须是 **x64**（同时覆盖 x64 原生与 Windows 11 on ARM64 的 x64 模拟层）。
+
+## 🧩 其他作品与组合用法
+
+- **[SonicRoute](https://github.com/kunkunkunQoQ/SonicRoute)**：Windows 按应用音量与设备路由、实时电平、快速面板、快捷键、托盘滚轮、OSD、自动化与命令行。本播放器的「输出到麦克风」就是按应用路由的一种应用场景。
+- **[WinAudioRoute](https://github.com/kunkunkunQoQ/WinAudioRoute)**：Windows 音频控制库（.NET），提供设备、会话、按应用路由、事件与 CLI。
+
+> 组合用法：把 SilentPlayer 配成 SonicRoute 自动化里的「启动程序」动作，即可实现按键播放音效（类似 SoundPad）。
+
+<a href="https://github.com/kunkunkunQoQ/XiaoYue-Comics" title="小跃的奇妙日常"><img src="https://raw.githubusercontent.com/kunkunkunQoQ/SonicRoute/master/docs/images/mascot-comics.png" width="84" align="right" alt="点击从蛋壳里探头、抱着漫画册的小跃，阅读漫画连载"></a>
+
+**[小跃的奇妙日常](https://github.com/kunkunkunQoQ/XiaoYue-Comics)**
+
+从鸡蛋里蹦出来的魔法少女，以及她越帮越忙的离谱日常。 [阅读漫画](https://github.com/kunkunkunQoQ/XiaoYue-Comics)
+
+---
+
+<a href="https://github.com/kunkunkunQoQ/SonicRoute" title="音跃 SonicRoute"><img src="https://raw.githubusercontent.com/kunkunkunQoQ/SonicRoute/master/docs/images/mascot-cozy-knit.png" width="56" align="right" alt="点击看板娘发现一个彩蛋"></a>
+
+感谢使用 SilentPlayer。 [查看文档](https://github.com/kunkunkunQoQ/SonicRoute/wiki) · [反馈问题](https://github.com/kunkunkunQoQ/SilentPlayer/issues)。
+
+**作者主页：[哔哩哔哩](https://b23.tv/TDqSAKM) | [爱发电](https://www.ifdian.net/a/koukou021) | [GitHub](https://github.com/kunkunkunQoQ)**
