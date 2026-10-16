@@ -76,6 +76,6 @@ source tools/buildenv.sh                              # 固化好的 MSVC x64 + 
 
 <a href="https://github.com/kunkunkunQoQ/SonicRoute" title="音跃 SonicRoute"><img src="https://raw.githubusercontent.com/kunkunkunQoQ/SonicRoute/master/docs/images/mascot-cozy-knit.png" width="56" align="right" alt="点击看板娘发现一个彩蛋"></a>
 
-感谢使用 SilentPlayer。 [查看文档](https://github.com/kunkunkunQoQ/SonicRoute/wiki) · [反馈问题](https://github.com/kunkunkunQoQ/SilentPlayer/issues)。
+感谢使用 SilentPlayer。 [反馈问题](https://github.com/kunkunkunQoQ/SilentPlayer/issues)。
 
 **作者主页：[哔哩哔哩](https://b23.tv/TDqSAKM) | [爱发电](https://www.ifdian.net/a/koukou021) | [GitHub](https://github.com/kunkunkunQoQ)**
