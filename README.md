@@ -1,12 +1,12 @@
 # SilentPlayer
 
 <p align="left">
-  <img src="https://img.shields.io/github/v/release/kunkunkunQoQ/SilentPlayer?label=最新版本&color=0078D6" alt="最新版本" />
-  <img src="https://img.shields.io/github/downloads/kunkunkunQoQ/SilentPlayer/total?label=总下载量&color=success" alt="GitHub 下载量" />
-  <img src="https://img.shields.io/badge/平台-Windows%2010%2F11%20(x64%20%7C%20ARM64)-blue?logo=windows" alt="平台" />
-  <img src="https://img.shields.io/badge/语言-C%2B%2B17-00599C?logo=c%2B%2B" alt="C++17" />
-  <img src="https://img.shields.io/badge/体积-~313%20KB-brightgreen" alt="体积" />
-  <a href="https://www.ifdian.net/a/koukou021"><img src="https://img.shields.io/badge/支持项目-爱发电-FF7A2F?logo=afdian&logoColor=white" alt="支持项目-爱发电" /></a>
+  <a href="https://github.com/kunkunkunQoQ/SilentPlayer/releases/latest"><img src="https://img.shields.io/github/v/release/kunkunkunQoQ/SilentPlayer?label=%E6%9C%80%E6%96%B0%E7%89%88%E6%9C%AC&color=0078D6" alt="最新版本" /></a>
+  <a href="https://github.com/kunkunkunQoQ/SilentPlayer/releases"><img src="https://img.shields.io/github/downloads/kunkunkunQoQ/SilentPlayer/total?label=%E4%B8%8B%E8%BD%BD%E9%87%8F&color=success" alt="下载量" /></a>
+  <img src="https://img.shields.io/badge/%E5%B9%B3%E5%8F%B0-Windows%2010%2F11%20(x64%20%7C%20ARM64)-blue?logo=windows" alt="平台" />
+  <img src="https://img.shields.io/badge/%E8%AF%AD%E8%A8%80-C%2B%2B17-00599C?logo=c%2B%2B" alt="C++17" />
+  <img src="https://img.shields.io/badge/%E4%BD%93%E7%A7%AF-~313%20KB-brightgreen" alt="体积" />
+  <a href="https://www.ifdian.net/a/koukou021"><img src="https://img.shields.io/badge/%E6%94%AF%E6%8C%81%E9%A1%B9%E7%9B%AE-%E7%88%B1%E5%8F%91%E7%94%B5-FF7A2F?logo=afdian&logoColor=white" alt="支持项目-爱发电" /></a>
 </p>
 
 极简、静默、低资源占用的 Windows 原生音频播放器。
@@ -101,14 +101,20 @@ SilentPlayer.exe --exit                # 退出 SilentPlayer
 
 ---
 
-## 📥 下载与运行环境
+## 📥 下载与 Releases
 
-前往 [GitHub Releases](https://github.com/kunkunkunQoQ/SilentPlayer/releases) 下载最新版本的 `SilentPlayer.exe`。
+### 立即下载最新版
 
-- **体积**：单 EXE 约 313 KB，免安装，解压/复制即可使用。
-- **系统要求**：
-  - Windows 10 / 11（x64 或 ARM64）
-  - **无需安装**任何第三方运行库、VC++ Redistributable 或 .NET Framework。
+| 产物文件 | 平台架构 | 文件体积 | 运行环境要求 | 快速下载 |
+| :--- | :--- | :--- | :--- | :--- |
+| **`SilentPlayer.exe`** | Windows x64 / ARM64 | ~313 KB (320,000 字节) | **零依赖**（免安装，无需 VC++ 运行库 / .NET） | [⬇️ **直接下载 v1.0.3**](https://github.com/kunkunkunQoQ/SilentPlayer/releases/download/v1.0.3/SilentPlayer.exe) |
+
+- **安全校验 (SHA-256)**：
+  ```
+  718d0b840beb41cc93a88abff701b309bcba449a1296dca96bd15032d83383b6  SilentPlayer.exe
+  ```
+
+> 📌 **版本发布历史**：更多历史版本与更新细节，请查阅 [GitHub Releases 页面](https://github.com/kunkunkunQoQ/SilentPlayer/releases)。
 
 ---
 
